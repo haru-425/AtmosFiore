@@ -22,19 +22,17 @@ export default defineConfig({
 					href: 'https://github.com/haru-425/AtmosFiore'
 				}
 			],
-
-			// 【最新仕様】autogenerateをitems配列の中にラップします
 			sidebar: [
 				{
-					label: 'プロジェクト概要',
+					label: 'プロジェクト・自己紹介',
 					items: [
-						{ label: 'AtmosFioreとは', slug: 'guides/example' },
+						{ autogenerate: { directory: 'guides' } } // guidesフォルダ内を自動メニュー化
 					],
 				},
 				{
 					label: 'コア技術・実装解説',
 					items: [
-						{ autogenerate: { directory: 'reference' } }
+						{ autogenerate: { directory: 'reference' } } // referenceフォルダ内を自動メニュー化
 					],
 				},
 			],

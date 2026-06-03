@@ -1,40 +1,41 @@
 ---
-title: Welcome to Starlight
-description: Get started building your docs site with Starlight.
-template: splash # Remove or comment out this line to display the site sidebar on this page.
+title: AtmosFiore
+description: 室内空間の空気感と光を支配する、次世代インドア・レンダリングシェーダー。
 hero:
-  tagline: Congrats on setting up a new Starlight project!
-  image:
-    file: ../../assets/houston.webp
+  tagline: 空間の魂は、光のバウンスによって定義される。室内表現のリアリティを極限まで追求したカスタムシェーダープロジェクト。
   actions:
-    - text: Example Guide
-      link: /guides/example/
+    - text: 技術解説を見る
+      link: /reference/
       icon: right-arrow
-    - text: Read the Starlight docs
-      link: https://starlight.astro.build
+      variant: primary
+    - text: GitHubでコードを見る
+      link: https://github.com/
       icon: external
       variant: minimal
 ---
 
-import { Card, CardGrid } from '@astrojs/starlight/components';
+import { Card, CardGrid } from "@astrojs/starlight/components";
 
-## Next steps
+## CORE ARCHITECTURE
 
 <CardGrid stagger>
-	<Card title="Update content" icon="pencil">
-		Edit `src/content/docs/index.mdx` to see this page change.
-	</Card>
-	<Card title="Change page layout" icon="document">
-		Delete `template: splash` in `src/content/docs/index.mdx` to display a
-		sidebar on this page.
-	</Card>
-	<Card title="Add new content" icon="add-document">
-		Add Markdown or MDX files to `src/content/docs` to create new pages.
-	</Card>
-	<Card title="Configure your site" icon="setting">
-		Edit your `sidebar` and other config in `astro.config.mjs`.
-	</Card>
-	<Card title="Read the docs" icon="open-book">
-		Learn more in [the Starlight Docs](https://starlight.astro.build/).
-	</Card>
+  <Card title="Global Illumination" icon="sun">
+    窓から差し込む一筋の光が床を叩き、柔らかな**バウンス光（間接光）**として部屋全体を包み込む「空気の重さ」を、独自のアルゴリズムで動的にシミュレート。
+  </Card>
+  <Card title="Physical Material (PBR)" icon="setting">
+    木材の微細な吸光、大理石の鋭い鏡面反射、カーテンを透過する遮光。室内のあらゆる物質の質感を**物理ベース（PBR）**で正確に描き出します。
+  </Card>
+  <Card title="Sharp SSR / Reflection" icon="eye">
+    静寂に満ちた室内の床やガラス。フレームレートを犠牲にすることなく、空間に圧倒的な深みと清涼感を与える**高精度なスクリーンスペース・リフレクション**。
+  </Card>
+  <Card title="Cinematic Color Grading" icon="document">
+    建築雑誌のグラビアや映画の一コマのような、トーンマッピングとカラーグレーディングを実装。ポストプロセスによる極上の空気感。
+  </Card>
 </CardGrid>
+
+---
+
+## SHADER PHILOSOPHY
+
+> "光を描くことは、空間の魂を定義することである。外面の派手さではなく、四方を壁に囲まれた『密室』の中でこそ、光と影の真のドラマが生まれる。"
+> — _AtmosFiore レンダリング・フィロソフィー_
