@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-import { Aside } from '@astrojs/starlight/components';
+import { Aside } from "@astrojs/starlight/components";
 
 グラフィックスにおいて、窓から入ってきた太陽光が床に当たり、その光が跳ね返って部屋全体を柔らかく照らす現象を **グローバルイルミネーション（GI / 間接光）** と呼びます。
 特に四方を壁に囲まれた室内表現においては、直接光（直射日光）が当たらない箇所がほとんどであるため、GI の実装は「空間の空気感」を描くために必須です。
@@ -22,7 +22,7 @@ AtmosFioreでは、DirectX 11の負荷制約の中で動的な光のバウンス
 L_out = L_direct + L_indirect
 ```
 
-ここで、間接光 $L_{indirect}$ は、直射日光 $L_{direct}$ が反射面（床など）に当たった際に、その反射面を「二次光源」として扱い、周囲の空間へコサイン重み付けされた放射束を再分配（インジェクション）することで計算されます。
+ここで、間接光 `L_indirect` は、直射日光 `L_direct` が反射面（床など）に当たった際に、その反射面を「二次光源」として扱い、周囲の空間へコサイン重み付けされた放射束を再分配（インジェクション）することで計算されます。
 
 ```mermaid
 sequenceDiagram
@@ -67,17 +67,17 @@ float3 CalculateIndirectBounce(float3 worldPos, float3 normal, float3 albedo)
 {
     // 簡易的な下方バウンスモデル (床からの照り返しをシミュレート)
     float3 floorNormal = float3(0.0f, 1.0f, 0.0f);
-    
+
     // 床に当たった直接光の強さを近似
     float floorDot = max(dot(-lightDirection, floorNormal), 0.0f);
     float3 floorReflectedColor = albedo * lightColor * floorDot;
-    
+
     // 現在のピクセル法線と床（上向き）とのコサイン重みを算出
     float bounceWeight = max(dot(normal, floorNormal) * 0.5f + 0.5f, 0.0f);
-    
+
     // 周囲からのアンビエントオクルージョン（AO）による遮蔽を乗算
     float ao = 1.0f; // 実際はG-BufferまたはSSAOテクスチャからサンプリング
-    
+
     return floorReflectedColor * bounceWeight * indirectIntensity * ao;
 }
 
