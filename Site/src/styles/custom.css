@@ -1,0 +1,19 @@
+/* 室内シェーダーをイメージしたダーク＆アンバーのグローテーマ */
+:root {
+  --sl-color-accent-low: #451a03;    /* 暗い琥珀 */
+  --sl-color-accent: #f59e0b;        /* 鮮やかなアンバー（灯火の光） */
+  --sl-color-accent-high: #fef3c7;   /* 明るい光 */
+  
+  /* ベース背景（深い闇） */
+  --sl-color-bg: #020617;            
+  --sl-color-bg-nav: #030712;
+  
+  /* テキストカラー */
+  --sl-color-text: #f8fafc;
+  --sl-color-text-muted: #94a3b8;
+}
+
+/* サイト名にほんのりグロー効果（発光）を与える */
+.site-title {
+  text-shadow: 0 0 15px rgba(245, 158, 11, 0.4);
+}
