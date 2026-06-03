@@ -16,14 +16,18 @@ import { Aside } from '@astrojs/starlight/components';
 
 反射方程式（Reflectance Equation）に基づき、各ピクセルにおける反射光は拡散反射（Diffuse）と鏡面反射（Specular）の和として表されます。
 
-$$f(l, v) = k_d f_{lambert} + k_s f_{cook\_torrance}$$
+```tex
+f(l, v) = k_d f_{lambert} + k_s f_{cook_torrance}
+```
 
 ### Specular BRDF 成分
-鏡面反射成分 $f_{cook\_torrance}$ には微細面（マイクロファセット）理論に基づく次の式を使用します。
+鏡面反射成分 `f_{cook_torrance}` には微細面（マイクロファセット）理論に基づく次の式を使用します。
 
-$$f_{cook\_torrance} = \frac{D \cdot F \cdot G}{4(\omega_o \cdot n)(\omega_i \cdot n)}$$
+```tex
+f_{cook_torrance} = \frac{D \cdot F \cdot G}{4(\omega_o \cdot n)(\omega_i \cdot n)}
+```
 
-- **$D$ (法線分布関数):** **GGX (Trowbridge-Reitz)** を採用。粗さ（Roughness）に応じたハイライトの広がりをシミュレートします。
+- **D** (法線分布関数): **GGX (Trowbridge-Reitz)** を採用。粗さ（Roughness）に応じたハイライトの広がりをシミュレートします。
 - **$F$ (フレネル項):** **Schlickの近似式**を採用。斜めから見るほど反射率が上がる金属光沢を再現します。
 - **$G$ (幾何遮蔽関数):** **Smith-GGX (Schlick-GGX)** を採用。微細な凹凸による自己遮蔽を計算します。
 
