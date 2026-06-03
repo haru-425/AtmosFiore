@@ -1,0 +1,140 @@
+---
+title: "技術解説：物理ベースマテリアル (PBR)"
+description: Cook-Torrance BRDF を用いた物理的に正確な室内の質感描画。
+sidebar:
+  order: 3
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+室内空間には、木製テーブルの柔らかい光の拡散、真鍮製ランプの鋭い金属反射、大理石タイルのクリアな反射光など、多種多様なマテリアルが存在します。
+これらを破綻なく、一つの共通シェーダーで描き分けるために、AtmosFioreでは **物理ベースレンダリング（PBR: Physically Based Rendering）** を採用しています。
+
+---
+
+## 📐 Cook-Torrance BRDF モデル
+
+反射方程式（Reflectance Equation）に基づき、各ピクセルにおける反射光は拡散反射（Diffuse）と鏡面反射（Specular）の和として表されます。
+
+$$f(l, v) = k_d f_{lambert} + k_s f_{cook\_torrance}$$
+
+### Specular BRDF 成分
+鏡面反射成分 $f_{cook\_torrance}$ には微細面（マイクロファセット）理論に基づく次の式を使用します。
+
+$$f_{cook\_torrance} = \frac{D \cdot F \cdot G}{4(\omega_o \cdot n)(\omega_i \cdot n)}$$
+
+- **$D$ (法線分布関数):** **GGX (Trowbridge-Reitz)** を採用。粗さ（Roughness）に応じたハイライトの広がりをシミュレートします。
+- **$F$ (フレネル項):** **Schlickの近似式**を採用。斜めから見るほど反射率が上がる金属光沢を再現します。
+- **$G$ (幾何遮蔽関数):** **Smith-GGX (Schlick-GGX)** を採用。微細な凹凸による自己遮蔽を計算します。
+
+---
+
+## 💻 HLSLコード実装
+
+以下は、AtmosFioreのディファードシェーディングパイプラインで使用される Cook-Torrance PBR モデルの HLSL 実装コードです。
+
+```hlsl
+// PBRCommon.hlsl
+static const float PI = 3.14159265359f;
+
+// 1. GGX (Trowbridge-Reitz NDF)
+float DistributionGGX(float3 N, float3 H, float roughness)
+{
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float NdotH = max(dot(N, H), 0.0f);
+    float NdotH2 = NdotH * NdotH;
+
+    float num = a2;
+    float denom = (NdotH2 * (a2 - 1.0f) + 1.0f);
+    denom = PI * denom * denom;
+
+    return num / max(denom, 0.0000001f); // ゼロ除算防止
+}
+
+// 2. Schlick-GGX Geometry (幾何減衰)
+float GeometrySchlickGGX(float NdotV, float roughness)
+{
+    float r = (roughness + 1.0f);
+    float k = (r * r) / 8.0f; // 直接光用の定数k
+
+    float num = NdotV;
+    float denom = NdotV * (1.0f - k) + k;
+
+    return num / denom;
+}
+
+// Smith-GGX Geometry
+float GeometrySmith(float3 N, float3 V, float3 L, float roughness)
+{
+    float NdotV = max(dot(N, V), 0.0f);
+    float NdotL = max(dot(N, L), 0.0f);
+    float ggx2 = GeometrySchlickGGX(NdotV, roughness);
+    float ggx1 = GeometrySchlickGGX(NdotL, roughness);
+
+    return ggx1 * ggx2;
+}
+
+// 3. Fresnel Schlick (フレネル反射)
+float3 FresnelSchlick(float cosTheta, float3 F0)
+{
+    return F0 + (1.0f - F0) * pow(clamp(1.0f - cosTheta, 0.0f, 1.0f), 5.0f);
+}
+
+// PBRライティングのメイン計算
+float3 ComputePBRLighting(float3 N, float3 V, float3 L, float3 lightColor, float3 albedo, float roughness, float metallic)
+{
+    float3 H = normalize(V + L);
+    float NdotL = max(dot(N, L), 0.0f);
+    float NdotV = max(dot(N, V), 0.0f);
+
+    // 非金属（プラスチックや木など）の基本反射率は 0.04 とする
+    float3 F0 = float3(0.04f, 0.04f, 0.04f);
+    F0 = lerp(F0, albedo, metallic); // 金属の場合はAlbedoの色を直接反射率に
+
+    // 各項の計算
+    float D = DistributionGGX(N, H, roughness);
+    float G = GeometrySmith(N, V, L, roughness);
+    float3 F = FresnelSchlick(max(dot(H, V), 0.0f), F0);
+
+    // Cook-Torrance BRDF の鏡面反射分母
+    float3 numerator = D * F * G;
+    float denominator = 4.0f * NdotV * NdotL;
+    float3 specular = numerator / max(denominator, 0.0001f);
+
+    // エネルギー保存の法則に基づく拡散成分の比率
+    float3 kS = F;
+    float3 kD = float3(1.0f, 1.0f, 1.0f) - kS;
+    kD *= (1.0f - metallic); // 金属は拡散反射しない
+
+    // 最終光強度
+    return (kD * albedo / PI + specular) * lightColor * NdotL;
+}
+```
+
+---
+
+## 🚪 室内表現特化の拡張 (Subsurface Scattering)
+
+<Aside type="note">
+  カーテンやランプシェードなど、背後から当たる光が生地の微細な繊維を透過して発光する現象を再現するため、簡易的な **次表面散乱（SSS）** モデルを追加しています。
+</Aside>
+
+### 半透過カーテンのシェーダー拡張
+光の向き $L$ と法線 $N$ の内積の逆方向をとり、厚みテクスチャ（Thickness）で減衰させてマテリアルのカラーを加算します。
+
+```hlsl
+// SSSによるカーテン透過の近似
+float3 CalculateCurtainTranslucency(float3 N, float3 L, float3 lightColor, float3 materialColor, float thickness)
+{
+    // 光が裏面から透過してくる強さ
+    float translucency = max(dot(-N, L), 0.0f);
+    
+    // 厚みによる減衰とライトカラーの乗算
+    float3 sssColor = materialColor * lightColor * pow(translucency, 4.0f) * (1.0f - thickness);
+    
+    return sssColor;
+}
+```
+
+これにより、朝の光が薄いカーテンを抜けて部屋に優しく満ちるような、情感あふれる窓際を描写可能にしています。

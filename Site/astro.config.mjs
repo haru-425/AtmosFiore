@@ -13,6 +13,8 @@ export default defineConfig({
 			title: 'AtmosFiore Docs & Portfolio',
 			// 室内シェーダーの「灯火と闇」を表現するカスタムCSS
 			customCss: ['./src/styles/custom.css'],
+			// 右側の目次（Table of Contents）をグローバルで非表示にする
+			tableOfContents: false,
 
 			// 【最新仕様】配列型（[]）の中にリンクをオブジェクトとして格納します
 			social: [

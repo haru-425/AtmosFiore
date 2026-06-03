@@ -1,0 +1,129 @@
+---
+title: 自己紹介 & スキルセット
+description: グラフィックスプログラマー志望、丸毛温仁のプロフィールと技術スタック。
+sidebar:
+  order: 1
+---
+
+import { Card, CardGrid, Badge } from '@astrojs/starlight/components';
+
+<div style="display: flex; align-items: center; gap: 2rem; margin-bottom: 2rem; flex-wrap: wrap;">
+  <div style="width: 150px; height: 150px; border-radius: 50%; overflow: hidden; border: 3px solid var(--sl-color-accent); box-shadow: 0 0 20px rgba(245, 158, 11, 0.3);">
+    <img src="https://pbs.twimg.com/profile_images/1951113680701235201/HVwnOpbo_400x400.jpg" alt="プロフィール写真" style="width: 100%; height: 100%; object-fit: cover;" />
+  </div>
+  <div>
+    <h2 style="margin: 0; font-size: 2rem;">丸毛 温仁 <span style="font-size: 1.2rem; color: var(--sl-color-text-muted);">(マルモ ハルト)</span></h2>
+    <p style="margin: 0.5rem 0 0 0; font-size: 1.1rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+      <Badge text="グラフィックスプログラマー志望" variant="note" size="medium" />
+      <Badge text="ECCコンピュータ専門学校 2年" variant="success" size="medium" />
+    </p>
+    <p style="margin: 0.8rem 0 0 0; color: var(--sl-color-text-muted);">
+      3Dゲームエンジン開発およびレンダリングパイプラインを専攻。<br />
+      DirectX 11 / C++を用いたローレベルな描画基盤の実装から、ゲームロジックへの応用までを一気通貫で開発できます。
+    </p>
+  </div>
+</div>
+
+---
+
+## 基本情報
+
+<table>
+  <thead>
+    <tr>
+      <th style="width: 30%">項目</th>
+      <th>内容</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>名前</strong></td>
+      <td>丸毛 温仁（マルモ ハルト）</td>
+    </tr>
+    <tr>
+      <td><strong>在籍校</strong></td>
+      <td>ECCコンピュータ専門学校 ゲーム開発研究学科 (2028年3月卒業見込み)</td>
+    </tr>
+    <tr>
+      <td><strong>希望職種</strong></td>
+      <td>グラフィックスプログラマー / ゲームプログラマー</td>
+    </tr>
+    <tr>
+      <td><strong>趣味</strong></td>
+      <td>習字（集中力とバランス感覚を養っています）</td>
+    </tr>
+  </tbody>
+</table>
+
+---
+
+## 技術スタック (Skills)
+
+<CardGrid>
+  <Card title="Engine & Graphics" icon="rocket">
+    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem;">
+      <Badge text="DirectX 11" variant="caution" />
+      <Badge text="HLSL" variant="caution" />
+      <Badge text="Unity" variant="note" />
+      <Badge text="Unreal Engine" variant="note" />
+    </div>
+    <ul>
+      <li><strong>DirectX 11:</strong> 描画パイプラインの構築、定数バッファやシェーダーリソースの管理、マルチレンダーターゲットの実装。</li>
+      <li><strong>HLSL:</strong> PBR（物理ベースレンダリング）、SSR、各種ポストプロセスシェーダーの実装。</li>
+      <li><strong>Unity / UE:</strong> C#やC++/Blueprintを用いたゲームロジック実装、各種エンジン機能の最適化。</li>
+    </ul>
+  </Card>
+
+  <Card title="Programming Languages" icon="code">
+    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem;">
+      <Badge text="C++ (Main)" variant="danger" />
+      <Badge text="C#" variant="danger" />
+      <Badge text="HLSL" variant="caution" />
+      <Badge text="HTML/CSS/JS" variant="note" />
+    </div>
+    <ul>
+      <li><strong>C++:</strong> メモリ管理、ポインタ操作、スマートポインタによるリソース管理、データ構造の最適化。</li>
+      <li><strong>C#:</strong> UniTaskを用いた非同期処理、Zenjectを用いた依存性注入（DI）など、Unityにおける設計パターン実践。</li>
+    </ul>
+  </Card>
+
+  <Card title="Tools & Workflows" icon="setting">
+    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem;">
+      <Badge text="Git / GitHub" variant="success" />
+      <Badge text="VS 2022" variant="success" />
+      <Badge text="Blender" variant="note" />
+    </div>
+    <ul>
+      <li><strong>バージョン管理:</strong> GitHub Flowを用いたチーム開発の実践、マージ競合の解決。</li>
+      <li><strong>デバッグ & プロファイリング:</strong> Visual Studio 2022のメモリプロファイラーやグラフィックスデバッガーを用いた負荷分析と最適化。</li>
+      <li><strong>3Dモデリング:</strong> Blenderでの簡易的なモデリング、UV展開、テクスチャ割り当て。</li>
+    </ul>
+  </Card>
+
+  <Card title="Business & Infrastructure" icon="document">
+    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem;">
+      <Badge text="Excel / PowerPoint" variant="note" />
+      <Badge text="Slack / Discord API" variant="success" />
+      <Badge text="Oracle Cloud (OCI)" variant="caution" />
+    </div>
+    <ul>
+      <li><strong>インフラ/自動化:</strong> OCIを用いたマルチサーバー構築、Discord/Slackへの自動化スクリプト連携。</li>
+      <li><strong>ドキュメンテーション:</strong> PowerPointでの仕様書・企画書作成、Excelでの進捗管理やパラメータ調整データ作成。</li>
+    </ul>
+  </Card>
+</CardGrid>
+
+---
+
+## 連絡先 (Contact)
+
+お気軽にお問い合わせください。
+
+<CardGrid>
+  <Card title="E-mail" icon="email">
+    [marumo.h.job@gmail.com](mailto:marumo.h.job@gmail.com)
+  </Card>
+  <Card title="X (Twitter)" icon="twitter">
+    [@rumo_atfi](https://x.com/rumo_atfi)
+  </Card>
+</CardGrid>

@@ -1,19 +1,157 @@
-/* 室内シェーダーをイメージしたダーク＆アンバーのグローテーマ */
+/* ================= Dark Theme (Default) ================= */
 :root {
   --sl-color-accent-low: #451a03;    /* 暗い琥珀 */
   --sl-color-accent: #f59e0b;        /* 鮮やかなアンバー（灯火の光） */
   --sl-color-accent-high: #fef3c7;   /* 明るい光 */
   
   /* ベース背景（深い闇） */
-  --sl-color-bg: #020617;            
-  --sl-color-bg-nav: #030712;
+  --sl-color-bg: #0b0f19;            
+  --sl-color-bg-nav: #070a12;
+  --sl-color-bg-sidebar: #070a12;
+  
+  /* カード用背景 (Glassmorphism調) */
+  --sl-color-bg-card: rgba(17, 24, 39, 0.6);
   
   /* テキストカラー */
   --sl-color-text: #f8fafc;
   --sl-color-text-muted: #94a3b8;
+  
+  /* ボーダー */
+  --sl-color-hairline: rgba(245, 158, 11, 0.15);
+  --sl-color-hairline-light: rgba(245, 158, 11, 0.25);
 }
 
-/* サイト名にほんのりグロー効果（発光）を与える */
+body {
+  background-image: 
+    radial-gradient(circle at 10% 20%, rgba(245, 158, 11, 0.03) 0%, transparent 40%),
+    radial-gradient(circle at 90% 80%, rgba(59, 130, 246, 0.02) 0%, transparent 45%) !important;
+  background-attachment: fixed !important;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5rem 0;
+  background: rgba(17, 24, 39, 0.3);
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(245, 158, 11, 0.1) !important;
+}
+
+th {
+  background: rgba(69, 26, 3, 0.3) !important;
+  border-bottom: 2px solid rgba(245, 158, 11, 0.2) !important;
+  color: var(--sl-color-accent-high) !important;
+  font-weight: 600;
+}
+
+pre {
+  border: 1px solid rgba(255, 255, 255, 0.05) !important;
+  background-color: rgba(5, 7, 12, 0.8) !important;
+}
+
+
+/* ================= Light Theme Overrides ================= */
+[data-theme='light'] {
+  --sl-color-accent-low: #fef3c7;    /* 明るい琥珀背景 */
+  --sl-color-accent: #d97706;        /* 濃いアンバー（コントラスト確保） */
+  --sl-color-accent-high: #78350f;   /* 暗い琥珀（文字用） */
+  
+  --sl-color-bg: #fafaf9;            /* ソフトなアイボリー/クリーム */
+  --sl-color-bg-nav: #f5f5f4;
+  --sl-color-bg-sidebar: #f5f5f4;
+  
+  --sl-color-bg-card: rgba(255, 255, 255, 0.8);
+  
+  --sl-color-text: #1c1917;          /* ダークウォームグレー */
+  --sl-color-text-muted: #57534e;
+  
+  --sl-color-hairline: rgba(217, 119, 6, 0.15);
+  --sl-color-hairline-light: rgba(217, 119, 6, 0.3);
+}
+
+[data-theme='light'] body {
+  background-image: 
+    radial-gradient(circle at 10% 20%, rgba(217, 119, 6, 0.04) 0%, transparent 40%),
+    radial-gradient(circle at 90% 80%, rgba(59, 130, 246, 0.02) 0%, transparent 45%) !important;
+}
+
+[data-theme='light'] table {
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(217, 119, 6, 0.15) !important;
+}
+
+[data-theme='light'] th {
+  background: rgba(254, 243, 199, 0.6) !important;
+  border-bottom: 2px solid rgba(217, 119, 6, 0.3) !important;
+  color: #78350f !important;
+}
+
+[data-theme='light'] pre {
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+  background-color: #f5f5f4 !important;
+}
+
+
+/* ================= Common Styles ================= */
 .site-title {
-  text-shadow: 0 0 15px rgba(245, 158, 11, 0.4);
+  text-shadow: 0 0 15px rgba(245, 158, 11, 0.5), 0 0 2px rgba(245, 158, 11, 0.8);
+  font-weight: 800;
+  letter-spacing: 0.05em;
+}
+
+[data-theme='light'] .site-title {
+  text-shadow: 0 0 8px rgba(217, 119, 6, 0.2);
+}
+
+.hero-section h1 {
+  background: linear-gradient(135deg, var(--sl-color-text) 30%, var(--sl-color-accent) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow: none;
+}
+
+.card {
+  background: var(--sl-color-bg-card) !important;
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--sl-color-hairline) !important;
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.card:hover {
+  border-color: var(--sl-color-accent) !important;
+  box-shadow: 0 10px 30px -10px rgba(245, 158, 11, 0.15), 0 0 15px -3px rgba(245, 158, 11, 0.05);
+  transform: translateY(-2px);
+}
+
+[data-theme='light'] .card:hover {
+  box-shadow: 0 10px 30px -10px rgba(217, 119, 6, 0.1), 0 0 15px -3px rgba(217, 119, 6, 0.03);
+}
+
+td, th {
+  padding: 10px 16px !important;
+  border-bottom: 1px solid var(--sl-color-hairline) !important;
+}
+
+tr:last-child td {
+  border-bottom: none !important;
+}
+
+/* スクロールバー */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--sl-color-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(245, 158, 11, 0.2);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(245, 158, 11, 0.4);
 }
