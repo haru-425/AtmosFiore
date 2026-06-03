@@ -4,6 +4,9 @@ on:
   push:
     branches: [main] # お使いのメインブランチ名が master の場合は master に変更
 
+env:
+  FORCE_JAVACRIPT_ACTIONS_TO_NODE24: "true"
+
 permissions:
   contents: read
   pages: write # 💡GitHub Pagesへの書き込みを許可
