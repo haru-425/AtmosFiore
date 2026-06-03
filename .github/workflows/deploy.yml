@@ -2,12 +2,12 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main] # ⚠️お使いのメインブランチ名が master の場合は master に変更してください
+    branches: [main] # お使いのメインブランチ名が master の場合は master に変更
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
+  pages: write # 💡GitHub Pagesへの書き込みを許可
+  id-token: write # 💡認証トークンの作成を許可
 
 concurrency:
   group: "pages"
@@ -22,6 +22,9 @@ jobs:
         uses: actions/checkout@v4
       - name: Setup Node
         uses: actions/configure-pages@v5
+        with:
+          # 💡Jekyllの自動ビルドを完全に無効化（静的ファイルとして扱う）する指定
+          enablement: true
       - name: Install Node.js dependencies
         run: npm ci
         working-directory: ./Site
