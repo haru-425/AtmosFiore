@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-import { Aside } from '@astrojs/starlight/components';
+import { Aside } from "@astrojs/starlight/components";
 
 室内空間には、木製テーブルの柔らかい光の拡散、真鍮製ランプの鋭い金属反射、大理石タイルのクリアな反射光など、多種多様なマテリアルが存在します。
 これらを破綻なく、一つの共通シェーダーで描き分けるために、AtmosFioreでは **物理ベースレンダリング（PBR: Physically Based Rendering）** を採用しています。
@@ -21,6 +21,7 @@ f(l, v) = k_d f_{lambert} + k_s f_{cook_torrance}
 ```
 
 ### Specular BRDF 成分
+
 鏡面反射成分 `f_{cook_torrance}` には微細面（マイクロファセット）理論に基づく次の式を使用します。
 
 ```tex
@@ -121,10 +122,12 @@ float3 ComputePBRLighting(float3 N, float3 V, float3 L, float3 lightColor, float
 ## 🚪 室内表現特化の拡張 (Subsurface Scattering)
 
 <Aside type="note">
-  カーテンやランプシェードなど、背後から当たる光が生地の微細な繊維を透過して発光する現象を再現するため、簡易的な **次表面散乱（SSS）** モデルを追加しています。
+  カーテンやランプシェードなど、背後から当たる光が生地の微細な繊維を透過して発光する現象を再現するため、簡易的な
+  **次表面散乱（SSS）** モデルを追加しています。
 </Aside>
 
 ### 半透過カーテンのシェーダー拡張
+
 光の向き $L$ と法線 $N$ の内積の逆方向をとり、厚みテクスチャ（Thickness）で減衰させてマテリアルのカラーを加算します。
 
 ```hlsl
@@ -133,10 +136,10 @@ float3 CalculateCurtainTranslucency(float3 N, float3 L, float3 lightColor, float
 {
     // 光が裏面から透過してくる強さ
     float translucency = max(dot(-N, L), 0.0f);
-    
+
     // 厚みによる減衰とライトカラーの乗算
     float3 sssColor = materialColor * lightColor * pow(translucency, 4.0f) * (1.0f - thickness);
-    
+
     return sssColor;
 }
 ```
