@@ -1,3 +1,4 @@
+#include "common.hlsli"
 /**
  * @brief エリアライトGPU構造体
  */
@@ -29,7 +30,6 @@ cbuffer CB_AreaLightCount : register(b7)
 // by Eric Heitz et al.
 // ============================================================================
 
-static const float PI = 3.14159265359;
 
 /**
  * @brief クランプされたコサインローブの積分を計算

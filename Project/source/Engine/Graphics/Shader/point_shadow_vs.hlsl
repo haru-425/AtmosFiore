@@ -1,5 +1,5 @@
 #include "gltf_model.hlsli"
-#include "point_shadow.hlsli"
+#include "shadow_point.hlsli"
 
 struct POINT_SHADOW_VS_OUT
 {

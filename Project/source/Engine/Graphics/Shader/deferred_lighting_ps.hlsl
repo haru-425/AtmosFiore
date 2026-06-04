@@ -2,10 +2,13 @@
 #include "samplers.hlsli"
 #include "constants.hlsli"
 #include "bidirectional_reflectance_distribution_function.hlsli"
+#include "shadow_directional.hlsli"
 #include "point_light.hlsli"
-#include "point_shadow.hlsli"
+#include "shadow_point.hlsli"
 #include "spot_light.hlsli"
+#include "shadow_spot.hlsli"
 #include "area_light.hlsli"
+#include "shadow_area.hlsli"
 
 Texture2D<float4> gbuffer0 : register(t0);
 Texture2D<float4> gbuffer1 : register(t1);
@@ -15,67 +18,7 @@ Texture2D<float> point_shadow_front_map : register(t4);
 Texture2D<float> point_shadow_back_map : register(t5);
 Texture2D<float> directional_shadow_map : register(t6);
 
-float SampleDirectionalShadow(float3 world_position, float3 normal, float3 light_dir)
-{
-    float4 light_view_position = mul(float4(world_position, 1.0f), light_view_projection);
-    light_view_position /= light_view_position.w;
 
-    float2 uv = light_view_position.xy * float2(0.5f, -0.5f) + 0.5f;
-    bool outside_shadow_map = any(uv < 0.0f) || any(uv > 1.0f) || light_view_position.z < 0.0f || light_view_position.z > 1.0f;
-    uv = saturate(uv);
-
-    float2 shadow_map_size = float2(1.0f, 1.0f);
-    directional_shadow_map.GetDimensions(shadow_map_size.x, shadow_map_size.y);
-    float2 texel_size = 1.0f / shadow_map_size;
-
-    float bias = max(0.005f * (1.0f - saturate(dot(normal, light_dir))), 0.0005f);
-    float depth = saturate(light_view_position.z - bias);
-
-    float shadow = 0.0f;
-    [unroll]
-    for (int y = -1; y <= 1; ++y)
-    {
-        [unroll]
-        for (int x = -1; x <= 1; ++x)
-        {
-            shadow += directional_shadow_map.SampleCmpLevelZero(
-                comparison_sampler_state,
-                uv + float2(x, y) * texel_size,
-                depth
-            );
-        }
-    }
-    float shadow_factor = shadow / 9.0f;
-    float min_shadow = 0.0f; // ここを 0.0f に近づけるほど影が濃くなります
-    float final_shadow = lerp(min_shadow, 1.0f, shadow_factor);
-
-    return outside_shadow_map ? 1.0f : final_shadow;
-}
-
-float SamplePointLightShadow(float3 world_position, float3 normal, float3 light_dir, int light_index)
-{
-    float3 light_vector = world_position - point_shadow_position_radius.xyz;
-    float distance_from_light = length(light_vector);
-    bool use_shadow =
-        point_shadow_options.y > 0.0f &&
-        light_index == 0 &&
-        distance_from_light > point_shadow_params.x &&
-        distance_from_light < point_shadow_params.y;
-
-    float lit = 1.0f;
-    if (use_shadow)
-    {
-        float2 uv = DualParaboloidUV(light_vector);
-        float slope_bias = point_shadow_params.w * (1.0f - saturate(dot(normal, light_dir)));
-        float receiver_depth = PointShadowDepth(distance_from_light) - max(point_shadow_params.w, slope_bias);
-        lit = light_vector.z >= 0.0f
-            ? point_shadow_front_map.SampleCmpLevelZero(comparison_sampler_state, uv, receiver_depth)
-            : point_shadow_back_map.SampleCmpLevelZero(comparison_sampler_state, uv, receiver_depth);
-    }
-
-   // return lerp(1.0f - point_shadow_options.x, 1.0f, lit);
-    return lerp(1.0f - 1.0f, 1.0f, lit);
-}
 
 float4 main(VS_OUT pin) : SV_TARGET
 {
@@ -116,7 +59,7 @@ float4 main(VS_OUT pin) : SV_TARGET
         float3 H = normalize(V + L);
         float NoH = max(0.0f, dot(N, H));
         float HoV = max(0.0f, dot(H, V));
-        float directional_shadow = SampleDirectionalShadow(position, N, L);
+        float directional_shadow = SampleDirectionalShadow(directional_shadow_map, position, N, L);
         
 
         diffuse += Li * directional_shadow * NoL * brdf_lambertian(f0, f90, c_diff, HoV);
@@ -149,7 +92,7 @@ float4 main(VS_OUT pin) : SV_TARGET
         float3 H = normalize(V + Lp);
         float NoH = max(0.0f, dot(N, H));
         float HoV = max(0.0f, dot(H, V));
-        float point_shadow = SamplePointLightShadow(position, N, Lp, i);
+        float point_shadow = SamplePointLightShadow(point_shadow_front_map, point_shadow_back_map, position, N, Lp, i);
 
         diffuse += pointLi * point_shadow * pointNoL * brdf_lambertian(f0, f90, c_diff, HoV);
         specular += pointLi * point_shadow * pointNoL * brdf_specular_ggx(f0, f90, alpha_roughness, HoV, pointNoL, NoV, NoH);
