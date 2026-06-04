@@ -201,12 +201,12 @@ void PointLightManager::debug_render()
 			worldMatrix,
 			{ l.diffuseColor.x, l.diffuseColor.y, l.diffuseColor.z, 1.0f }
 		);
-		DirectX::XMStoreFloat4x4(&worldMatrix, world_R);
-		_debug_sphere->Render(
-			Graphics_Core::instance().get_device_context(),
-			worldMatrix,
-			{ l.diffuseColor.x, l.diffuseColor.y, l.diffuseColor.z, 0.3f }
-		);
+		//DirectX::XMStoreFloat4x4(&worldMatrix, world_R);
+		//_debug_sphere->Render(
+		//	Graphics_Core::instance().get_device_context(),
+		//	worldMatrix,
+		//	{ l.diffuseColor.x, l.diffuseColor.y, l.diffuseColor.z, 0.3f }
+		//);
 	}
 
 
