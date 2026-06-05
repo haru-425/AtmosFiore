@@ -183,19 +183,20 @@ void AreaLightManager::debug_render()
 			}
 		}
 
-		// direction は照射方向なので反転して面法線化（シェーダーと同じ処理）
+		// directionは照射方向なので反転して面法線化（シェーダーと同じ）
 		dx::XMVECTOR dir = dx::XMLoadFloat3(&l.direction);
 		dir = dx::XMVector3Normalize(dir);
-		dx::XMVECTOR D = dx::XMVectorNegate(dir); // 反転して面法線
-
-		// right を面へ射影（シェーダーと同じ処理）
+		dx::XMVECTOR normal = dx::XMVectorNegate(dir); // 面法線（照射方向）
+		
 		dx::XMVECTOR right = dx::XMLoadFloat3(&l.right);
-		dx::XMVECTOR dot = dx::XMVector3Dot(right, D);
-		dx::XMVECTOR R = dx::XMVectorSubtract(right, dx::XMVectorMultiply(D, dot));
-		R = dx::XMVector3Normalize(R);
-
-		// up ベクトルの計算順序をシェーダーと一致させる
-		dx::XMVECTOR U = dx::XMVector3Cross(R, D);
+		right = dx::XMVector3Normalize(right);
+		
+		// rightを面へ射影（シェーダーと同じ）
+		dx::XMVECTOR dot = dx::XMVector3Dot(right, normal);
+		dx::XMVECTOR rightProjected = dx::XMVectorSubtract(right, dx::XMVectorMultiply(normal, dot));
+		rightProjected = dx::XMVector3Normalize(rightProjected);
+		
+		dx::XMVECTOR up = dx::XMVector3Cross(rightProjected, normal);
 
 		// スケール行列
 		DirectX::XMMATRIX S = DirectX::XMMatrixScaling(l.width, l.height, 0.1f);
@@ -203,13 +204,13 @@ void AreaLightManager::debug_render()
 		// 回転行列（方向ベクトルに合わせる）
 		dx::XMFLOAT4X4 rotationMatrix;
 		dx::XMFLOAT3X3 rotation3x3;
-		dx::XMFLOAT3 RFloat, UFloat, DFloat;
-		DirectX::XMStoreFloat3(&RFloat, R);
-		DirectX::XMStoreFloat3(&UFloat, U);
-		DirectX::XMStoreFloat3(&DFloat, D);
-		rotation3x3._11 = RFloat.x; rotation3x3._12 = RFloat.y; rotation3x3._13 = RFloat.z;
-		rotation3x3._21 = UFloat.x; rotation3x3._22 = UFloat.y; rotation3x3._23 = UFloat.z;
-		rotation3x3._31 = DFloat.x; rotation3x3._32 = DFloat.y; rotation3x3._33 = DFloat.z;
+		dx::XMFLOAT3 rightFloat, upFloat, normalFloat;
+		DirectX::XMStoreFloat3(&rightFloat, rightProjected);
+		DirectX::XMStoreFloat3(&upFloat, up);
+		DirectX::XMStoreFloat3(&normalFloat, normal);
+		rotation3x3._11 = rightFloat.x; rotation3x3._12 = rightFloat.y; rotation3x3._13 = rightFloat.z;
+		rotation3x3._21 = upFloat.x;    rotation3x3._22 = upFloat.y;    rotation3x3._23 = upFloat.z;
+		rotation3x3._31 = normalFloat.x; rotation3x3._32 = normalFloat.y; rotation3x3._33 = normalFloat.z;
 		dx::XMMATRIX rotation = DirectX::XMLoadFloat3x3(&rotation3x3);
 
 		// 平行移動行列（ライトの位置へ）
