@@ -8,6 +8,8 @@ void AreaLightManager::initialize(ID3D11Device* device)
 	create_structured_buffer(device);
 	create_light_count_buffer(device);
 	_debug_box = new Debug_Cube(device);
+	_debug_disk = new Debug_Disk(device, 32);
+	_debug_sphere = new Debug_Sphere(device, 16, 16);
 }
 
 void AreaLightManager::add_light(const AreaLight& light)
@@ -125,6 +127,8 @@ void AreaLightManager::upload_to_gpu(ID3D11DeviceContext* ctx)
 		g.direction = l.direction;
 		g.height = l.height;
 		g.right = l.right;
+		g.radius = l.radius;
+		g.shape = static_cast<uint32_t>(l.shape);
 		g.intensity = l.intensity;
 		g.color = { l.diffuseColor.x, l.diffuseColor.y, l.diffuseColor.z };
 		gpuLights.push_back(g);
@@ -223,12 +227,41 @@ void AreaLightManager::debug_render()
 		DirectX::XMFLOAT4X4 worldMatrix;
 		DirectX::XMStoreFloat4x4(&worldMatrix, world);
 
-		// デバッグ矩形の描画
-		_debug_box->Render(
-			Graphics_Core::instance().get_device_context(),
-			worldMatrix,
-			{ l.diffuseColor.x, l.diffuseColor.y, l.diffuseColor.z, 1.0f }
-		);
+		// 形状に応じたデバッグ描画
+		if (l.shape == AreaLightShape::Rectangle)
+		{
+			_debug_box->Render(
+				Graphics_Core::instance().get_device_context(),
+				worldMatrix,
+				{ l.diffuseColor.x, l.diffuseColor.y, l.diffuseColor.z, 1.0f }
+			);
+		}
+		else if (l.shape == AreaLightShape::Disk)
+		{
+			// 円盤用のスケール行列（半径を適用）
+			DirectX::XMMATRIX S_disk = DirectX::XMMatrixScaling(l.radius, l.radius, 0.1f);
+			DirectX::XMMATRIX world_disk = S_disk * rotation * T;
+			DirectX::XMStoreFloat4x4(&worldMatrix, world_disk);
+
+			_debug_disk->Render(
+				Graphics_Core::instance().get_device_context(),
+				worldMatrix,
+				{ l.diffuseColor.x, l.diffuseColor.y, l.diffuseColor.z, 1.0f }
+			);
+		}
+		else if (l.shape == AreaLightShape::Sphere)
+		{
+			// 球形用のスケール行列（半径を適用）
+			DirectX::XMMATRIX S_sphere = DirectX::XMMatrixScaling(l.radius, l.radius, l.radius);
+			DirectX::XMMATRIX world_sphere = S_sphere * T; // 球形は回転不要
+			DirectX::XMStoreFloat4x4(&worldMatrix, world_sphere);
+
+			_debug_sphere->Render(
+				Graphics_Core::instance().get_device_context(),
+				worldMatrix,
+				{ l.diffuseColor.x, l.diffuseColor.y, l.diffuseColor.z, 1.0f }
+			);
+		}
 	}
 }
 

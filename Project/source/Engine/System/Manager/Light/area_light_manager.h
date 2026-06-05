@@ -156,4 +156,8 @@ private:
 
 	/// デバッグ描画用矩形
 	Debug_Cube* _debug_box;
+	/// デバッグ描画用円盤
+	Debug_Disk* _debug_disk;
+	/// デバッグ描画用球
+	Debug_Sphere* _debug_sphere;
 };

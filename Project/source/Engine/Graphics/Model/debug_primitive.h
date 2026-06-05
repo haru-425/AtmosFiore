@@ -200,3 +200,20 @@ public:
 	 */
 	Debug_Cone(ID3D11Device* device, uint32_t slices);
 };
+
+/**
+ * @brief デバッグ用円盤（ディスク）
+ */
+class Debug_Disk : public DebugPrimitive
+{
+public:
+	/**
+	 * @brief コンストラクタ
+	 *
+	 * @param device D3D11デバイス
+	 * @param slices 円周分割数
+	 *
+	 * @note slicesが大きいほど滑らかになるがコスト増加
+	 */
+	Debug_Disk(ID3D11Device* device, uint32_t slices);
+};

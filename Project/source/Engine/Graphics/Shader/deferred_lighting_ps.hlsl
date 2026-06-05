@@ -157,78 +157,31 @@ float4 main(VS_OUT pin) : SV_TARGET
 // Area Light
     for (int i = 0; i < numAreaLights; ++i)
     {
-        if (
-        areaLights[i].intensity <= 0
-    )
+        if (areaLights[i].intensity <= 0)
             continue;
 
 
     // 面の向きだけ判定
-        if (
-        dot(
-            N,
-            -normalize(
-                areaLights[i].direction
-            )
-        )
-
-        <= 0
-    )
+        if (dot(N, -normalize(areaLights[i].direction)) <= 0)
             continue;
 
+        float3 ltcDiffuse = LTC_Diffuse(N, V, position, areaLights[i], c_diff, f0, f90);
 
-        float3 ltcDiffuse =
-
-        LTC_Diffuse(
-            N,
-            V,
-            position,
-
-            areaLights[i],
-
-            c_diff,
-
-            f0,
-
-            f90
-        );
-
-
-        float3 ltcSpecular =
-
-        LTC_Specular(
-            N,
-            V,
-            position,
-
-            areaLights[i],
-
-            roughness,
-
-            f0,
-
-            f90
-        );
+        float3 ltcSpecular = LTC_Specular(N, V, position, areaLights[i], roughness, f0, f90);
 
 
     // Directional と揃える
         const float exposure = 5.0;
 
 
-        diffuse +=
-        ltcDiffuse
-        *
-        exposure;
+        diffuse += ltcDiffuse * exposure;
 
 
-        specular +=
-        ltcSpecular
-        *
-        exposure;
+        specular += ltcSpecular * exposure;
     }
 
-    //diffuse += ibl_radiance_lambertian(N, V, roughness, c_diff, f0) * 0.2;
-    //specular += ibl_radiance_ggx(N, V, roughness, f0) * 0.2;
+    diffuse += ibl_radiance_lambertian(N, V, roughness, c_diff, f0) * 0.2;
+    specular += ibl_radiance_ggx(N, V, roughness, f0) * 0.2;
 
     diffuse *= occlusion;
     specular *= occlusion;

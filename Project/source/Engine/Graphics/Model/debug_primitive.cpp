@@ -793,3 +793,39 @@ Debug_Cone::Debug_Cone(ID3D11Device* device, uint32_t slices) : DebugPrimitive(d
 
 	CreateComBuffers(device, vertices.data(), vertices.size(), indices.data(), indices.size());
 }
+
+Debug_Disk::Debug_Disk(ID3D11Device* device, uint32_t slices) : DebugPrimitive(device)
+{
+	std::vector<Vertex> vertices;
+	std::vector<uint32_t> indices;
+
+	float d{ 2.0f * DirectX::XM_PI / slices };
+	float r{ 0.5f };
+
+	Vertex vertex{};
+
+	// 中心頂点
+	vertex.position = { 0.0f, 0.0f, 0.0f };
+	vertex.normal = { 0.0f, +1.0f, 0.0f };
+	vertices.emplace_back(vertex);
+
+	// 円周上の頂点
+	for (uint32_t i = 0; i <= slices; ++i)
+	{
+		float x{ r * cosf(i * d) };
+		float z{ r * sinf(i * d) };
+		vertex.position = { x, 0.0f, z };
+		vertex.normal = { 0.0f, +1.0f, 0.0f };
+		vertices.emplace_back(vertex);
+	}
+
+	// インデックス（中心から円周上の点へ）
+	for (uint32_t i = 0; i < slices; ++i)
+	{
+		indices.emplace_back(0); // 中心
+		indices.emplace_back(i + 1);
+		indices.emplace_back(i + 2);
+	}
+
+	CreateComBuffers(device, vertices.data(), vertices.size(), indices.data(), indices.size());
+}
