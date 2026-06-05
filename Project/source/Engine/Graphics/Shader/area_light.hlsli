@@ -1,7 +1,11 @@
 #include "common.hlsli"
-/**
- * @brief エリアライトGPU構造体
- */
+
+#define LTC_LUT_SIZE 64
+
+//=============================================================================
+// Area Light
+//=============================================================================
+
 struct AreaLight_GPU
 {
     float3 position;
@@ -18,212 +22,557 @@ struct AreaLight_GPU
 };
 
 StructuredBuffer<AreaLight_GPU> areaLights : register(t9);
+
 cbuffer CB_AreaLightCount : register(b7)
 {
     uint numAreaLights;
-    uint ALpadding[3];
+    uint pad0;
+    uint pad1;
+    uint pad2;
 };
 
-// ============================================================================
-// LTC (Linearly Transformed Cosines) Implementation
-// Based on "Real-Time Polygonal-Light Shading with Linearly Transformed Cosines"
-// by Eric Heitz et al.
-// ============================================================================
 
 
-/**
- * @brief クランプされたコサインローブの積分を計算
- * @param v1 頂点1
- * @param v2 頂点2
- * @return 積分値
- */
-float IntegrateEdge(float3 v1, float3 v2)
+//-----------------------------------------------------------------------------
+// Sphere Edge Integral
+//-----------------------------------------------------------------------------
+float IntegrateEdge(
+    float3 v1,
+    float3 v2
+)
 {
-    float3 v = normalize(v2 - v1);
-    float3 n = normalize(cross(v1, v2));
-    
-    float theta = acos(clamp(dot(normalize(v1), normalize(v2)), -1.0, 1.0));
-    float theta_sin = sin(theta);
-    
-    if (theta_sin < 1e-6)
-        return 0.0;
-    
-    float theta_cos = cos(theta);
-    float r1 = length(v1);
-    float r2 = length(v2);
-    
-    float c = dot(n, v);
-    float s = sqrt(1.0 - c * c);
-    
-    return theta_cos * theta_sin / (r1 * r2) * s;
+    float x =
+        clamp(
+            dot(v1, v2),
+            -0.9999,
+            0.9999
+        );
+
+    float y =
+        abs(x);
+
+    float a =
+        0.8543985 +
+
+        (
+            0.4965155 +
+
+            0.0145206 * y
+
+        )
+
+        *
+
+        y;
+
+    float b =
+
+        3.4175940 +
+
+        (
+
+        4.1616724 +
+
+        y
+
+        )
+
+        *
+
+        y;
+
+
+    float theta =
+
+        (x > 0)
+
+        ?
+
+        (a / b)
+
+        :
+
+        (
+
+        0.5 *
+
+        rsqrt(
+
+        max(
+
+        1 - x * x,
+
+        1e-6
+
+        )
+
+        )
+
+        -
+
+        a / b
+
+        );
+
+
+
+    return
+
+        cross(
+
+        v1,
+
+        v2
+
+        ).z
+
+        *
+
+        theta;
 }
 
-/**
- * @brief 多角形の積分を計算
- * @param p 多角形の頂点配列
- * @param n 頂点数
- * @return 積分値
- */
-float IntegratePolygon(float3 p[4], int n)
-{
-    float sum = 0.0;
-    
-    for (int i = 0; i < n; i++)
-    {
-        int j = (i + 1) % n;
-        sum += IntegrateEdge(p[i], p[j]);
-    }
-    
-    return sum;
-}
 
-/**
- * @brief LTCマトリックスを計算（GGX BRDF用の近似）
- * @param roughness 粗さ
- * @param cosTheta 視線と法線の内積
- * @param[out] m マトリックス
- * @param[out] mInv 逆マトリックス
- * @return マトリックスの行列式
- */
-float LTC_Matrix_GGX(float roughness, float cosTheta, out float3x3 m, out float3x3 mInv)
-{
-    // GGX用のLTCマトリックス近似
-    float a = max(roughness, 0.001);
-    float a2 = a * a;
-    
-    // 等方性LTCマトリックス
-    m = float3x3(
-        1.0, 0.0, 0.0,
-        0.0, 1.0, 0.0,
-        0.0, 0.0, 1.0
-    );
-    
-    // 粗さによるスケーリング
-    float scale = 1.0 / max(a2, 0.001);
-    m[0][0] = scale;
-    m[1][1] = scale;
-    
-    // 逆マトリックス
-    mInv = float3x3(
-        a2, 0.0, 0.0,
-        0.0, a2, 0.0,
-        0.0, 0.0, 1.0
-    );
-    
-    // 行列式
-    return a2 * a2;
-}
 
-/**
- * @brief LTCによるエリアライトの拡散反射計算
- * @param N サーフェス法線
- * @param V 視線方向
- * @param P サーフェス位置
- * @param light エリアライト
- * @param c_diff 拡散反射色
- * @param f0 フレネルF0
- * @param f90 フレネルF90
- * @return 拡散反射輝度
- */
-float3 LTC_Diffuse(float3 N, float3 V, float3 P, AreaLight_GPU light, float3 c_diff, float3 f0, float3 f90)
+//-----------------------------------------------------------------------------
+// Polygon Integral
+//-----------------------------------------------------------------------------
+float IntegratePolygon(
+    float3 p[4]
+)
 {
-    // ライトのローカル座標系を構築
-    float3 lightDir = normalize(light.direction);
-    float3 lightRight = normalize(light.right - lightDir * dot(light.right, lightDir));
-    float3 lightUp = cross(lightDir, lightRight);
-    
-    // 矩形の4頂点をワールド座標で計算
-    float halfWidth = light.width * 0.5;
-    float halfHeight = light.height * 0.5;
-    
-    float3 p[4];
-    p[0] = light.position - halfWidth * lightRight - halfHeight * lightUp;
-    p[1] = light.position + halfWidth * lightRight - halfHeight * lightUp;
-    p[2] = light.position + halfWidth * lightRight + halfHeight * lightUp;
-    p[3] = light.position - halfWidth * lightRight + halfHeight * lightUp;
-    
-    // ライト座標系へ変換
-    float3x3 lightBasis;
-    lightBasis[0] = lightRight;
-    lightBasis[1] = lightUp;
-    lightBasis[2] = lightDir;
-    
+    [unroll]
     for (int i = 0; i < 4; i++)
     {
-        p[i] = mul(transpose(lightBasis), p[i] - P);
-    }
-    
-    // 積分計算（拡散用は単位行列を使用）
-    float integral = IntegratePolygon(p, 4);
-    
-    // BRDFの拡散項（Lambertian）
-    float NoV = saturate(dot(N, V));
-    float3 F = f0 + (f90 - f0) * pow(1.0 - NoV, 5.0);
-    float3 brdf_diff = (1.0 - F) * (c_diff / PI);
-    
-    // 拡散反射の計算
-    float3 diff = light.color * light.intensity * integral * brdf_diff;
-    
-    return diff;
-}
+        float len =
+            length(
+                p[i]
+            );
 
-/**
- * @brief LTCによるエリアライトの鏡面反射計算
- * @param N サーフェス法線
- * @param V 視線方向
- * @param P サーフェス位置
- * @param light エリアライト
- * @param roughness 粗さ
- * @param f0 フレネルF0
- * @param f90 フレネルF90
- * @return 鏡面反射輝度
- */
-float3 LTC_Specular(float3 N, float3 V, float3 P, AreaLight_GPU light, float roughness, float3 f0, float3 f90)
-{
-    float NoV = saturate(dot(N, V));
-    
-    // LTCマトリックスの計算
-    float3x3 M, Minv;
-    float det = LTC_Matrix_GGX(roughness, NoV, M, Minv);
-    
-    // ライトのローカル座標系を構築
-    float3 lightDir = normalize(light.direction);
-    float3 lightRight = normalize(light.right - lightDir * dot(light.right, lightDir));
-    float3 lightUp = cross(lightDir, lightRight);
-    
-    // 矩形の4頂点をワールド座標で計算
-    float halfWidth = light.width * 0.5;
-    float halfHeight = light.height * 0.5;
-    
-    float3 p[4];
-    p[0] = light.position - halfWidth * lightRight - halfHeight * lightUp;
-    p[1] = light.position + halfWidth * lightRight - halfHeight * lightUp;
-    p[2] = light.position + halfWidth * lightRight + halfHeight * lightUp;
-    p[3] = light.position - halfWidth * lightRight + halfHeight * lightUp;
-    
-    // ライト座標系へ変換
-    float3x3 lightBasis;
-    lightBasis[0] = lightRight;
-    lightBasis[1] = lightUp;
-    lightBasis[2] = lightDir;
-    
+        if (len < 1e-6)
+            return 0;
+
+        p[i] /= len;
+    }
+
+
+    float sum = 0;
+
+
+    [unroll]
     for (int i = 0; i < 4; i++)
     {
-        float3 local = mul(transpose(lightBasis), p[i] - P);
-        p[i] = mul(M, local);
+        sum +=
+
+        IntegrateEdge(
+
+        p[i],
+
+        p[(i + 1) & 3]
+
+        );
     }
-    
-    // 積分計算
-    float integral = IntegratePolygon(p, 4);
-    
-    // フレネル項の計算
-    float3 F = f0 + (f90 - f0) * pow(1.0 - NoV, 5.0);
-    
-    // LTCのスケーリング係数（BRDFの積分値）
-    float ltc_scale = 1.0 / PI;
-    
-    // 鏡面反射の計算
-    float3 spec = light.color * light.intensity * integral * F * det * ltc_scale;
-    
-    return spec;
+
+    return
+        max(
+            sum,
+            0
+        );
+}
+
+
+
+//-----------------------------------------------------------------------------
+// Basis
+//-----------------------------------------------------------------------------
+float3x3 BuildBasis(
+    float3 N,
+    float3 V
+)
+{
+    float3 T =
+
+        V -
+
+        N *
+
+        dot(
+            V,
+            N
+        );
+
+
+    if (dot(T, T) < 1e-6)
+    {
+        T =
+
+        abs(N.z) < 0.99
+
+        ?
+
+        cross(
+            float3(0, 0, 1),
+            N
+        )
+
+        :
+
+        cross(
+            float3(1, 0, 0),
+            N
+        );
+    }
+
+    T =
+        normalize(T);
+
+
+    float3 B =
+        normalize(
+            cross(
+                N,
+                T
+            )
+        );
+
+    return transpose(
+        float3x3(
+            T,
+            B,
+            N
+        )
+    );
+}
+
+
+
+//-----------------------------------------------------------------------------
+// LTC Approximation
+//-----------------------------------------------------------------------------
+float3x3 LTC_MatrixInv(
+    float roughness,
+    float NoV
+)
+{
+    roughness =
+        max(
+            roughness,
+            0.03
+        );
+
+    float s =
+
+        1.0 /
+
+        (
+            roughness *
+            roughness
+        );
+
+
+    float stretch =
+
+        lerp(
+            1.0,
+            s,
+            1.0 - NoV
+        );
+
+
+    return float3x3(
+
+        stretch, 0, 0,
+
+        0, stretch, 0,
+
+        0, 0, 1
+    );
+}
+
+
+
+//-----------------------------------------------------------------------------
+// Evaluate
+//-----------------------------------------------------------------------------
+float LTC_Evaluate(
+    float3 N,
+    float3 V,
+    float3 P,
+    AreaLight_GPU light,
+    float3x3 Minv
+)
+{
+    // direction は照射方向なので反転して面法線化
+    float3 D =
+        normalize(
+            -light.direction
+        );
+
+    // ライト裏面除外
+    float facing =
+        dot(
+            -D,
+            normalize(
+                P -
+                light.position
+            )
+        );
+
+    if (facing <= 0)
+        return 0;
+
+
+    // right を面へ射影
+    float3 R =
+        normalize(
+            light.right
+            -
+            D *
+            dot(
+                light.right,
+                D
+            )
+        );
+
+    // 修正: cross 順序
+    float3 U =
+        normalize(
+            cross(
+                R,
+                D
+            )
+        );
+
+
+    float hw =
+        light.width *
+        0.5;
+
+    float hh =
+        light.height *
+        0.5;
+
+
+    float3 p[4];
+
+    p[0] =
+        light.position
+        - R * hw
+        - U * hh;
+
+    p[1] =
+        light.position
+        + R * hw
+        - U * hh;
+
+    p[2] =
+        light.position
+        + R * hw
+        + U * hh;
+
+    p[3] =
+        light.position
+        - R * hw
+        + U * hh;
+
+
+    float3x3 basis =
+        BuildBasis(
+            N,
+            V
+        );
+
+
+    [unroll]
+    for (int i = 0; i < 4; i++)
+    {
+        p[i] -= P;
+
+        p[i] =
+            mul(
+                basis,
+                p[i]
+            );
+
+        p[i] =
+            mul(
+                Minv,
+                p[i]
+            );
+    }
+
+
+    // 面積補正追加
+    float area =
+        light.width
+        *
+        light.height;
+
+
+    return
+
+        IntegratePolygon(
+            p
+        )
+
+        *
+
+        area;
+}
+
+
+//-----------------------------------------------------------------------------
+// Diffuse
+//-----------------------------------------------------------------------------
+float3 LTC_Diffuse(
+    float3 N,
+    float3 V,
+    float3 P,
+
+    AreaLight_GPU light,
+
+    float3 c_diff,
+
+    float3 f0,
+
+    float3 f90
+)
+{
+    float integral =
+
+        LTC_Evaluate(
+
+        N,
+
+        V,
+
+        P,
+
+        light,
+
+        float3x3(
+
+        1, 0, 0,
+
+        0, 1, 0,
+
+        0, 0, 1
+
+        )
+
+        );
+
+
+
+    return
+
+        light.color
+
+        *
+
+        light.intensity
+
+        *
+
+        integral
+
+        *
+
+        c_diff
+
+        /
+
+        PI;
+}
+
+
+
+//-----------------------------------------------------------------------------
+// Specular
+//-----------------------------------------------------------------------------
+float3 LTC_Specular(
+    float3 N,
+    float3 V,
+    float3 P,
+
+    AreaLight_GPU light,
+
+    float roughness,
+
+    float3 f0,
+
+    float3 f90
+)
+{
+    float NoV =
+        saturate(
+            dot(
+                N,
+                V
+            )
+        );
+
+
+    float3x3 Minv =
+
+        LTC_MatrixInv(
+
+        roughness,
+
+        NoV
+
+        );
+
+
+    float integral =
+
+        LTC_Evaluate(
+
+        N,
+
+        V,
+
+        P,
+
+        light,
+
+        Minv
+
+        );
+
+
+    float3 F =
+
+        f0 +
+
+        (
+
+        f90 -
+
+        f0
+
+        )
+
+        *
+
+        pow(
+            1 - NoV,
+            5
+        );
+
+
+    return
+
+        light.color
+
+        *
+
+        light.intensity
+
+        *
+
+        integral
+
+        *
+
+        F;
 }

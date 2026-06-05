@@ -51,14 +51,15 @@ void Scene_Indoor::initialize()
 	//	Graphics_Core::instance().get_spot_light_manager().add_light({ x, 5.0f, z }, direction, r, intensity, innerAngle, outerAngle, diffuseColor);
 	//}
 
-	for (int i = 0; i < 100; i++) {
-		float x = Random::Range(-10.0f, 10.0f); // -10～10の範囲で配置
-		float z = Random::Range(-10.0f, 10.0f); // -10～10の範囲で配置
-		float r = 5.0f; // 半径は固定（必要に応じてランダム化も可能）
-		float intensity = 10.0f; // 強度は固定（必要に応じてランダム化も可能）
-		dx::XMFLOAT4 diffuseColor = Color_Utils::random_hsv(1.0f, 1.0f, 1.0f); // ランダムな色相の明るい色
-		Graphics_Core::instance().get_point_light_manager().add_light({ x, 2.0f, z }, r, intensity, diffuseColor);
-	}
+	//for (int i = 0; i < 100; i++) {
+	//	float x = Random::Range(-10.0f, 10.0f); // -10～10の範囲で配置
+	//	float z = Random::Range(-10.0f, 10.0f); // -10～10の範囲で配置
+	//	float r = 5.0f; // 半径は固定（必要に応じてランダム化も可能）
+	//	float intensity = 10.0f; // 強度は固定（必要に応じてランダム化も可能）
+	//	dx::XMFLOAT4 diffuseColor = Color_Utils::random_hsv(1.0f, 1.0f, 1.0f); // ランダムな色相の明るい色
+	//	Graphics_Core::instance().get_point_light_manager().add_light({ x, 2.0f, z }, r, intensity, diffuseColor);
+	//}
+	Graphics_Core::instance().get_area_light_manager().add_light();
 
 	ModelInstance s;
 	s.model_key = "Library";
