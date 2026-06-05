@@ -227,8 +227,8 @@ float4 main(VS_OUT pin) : SV_TARGET
         exposure;
     }
 
-    //diffuse += ibl_radiance_lambertian(N, V, roughness, c_diff, f0) * 0.2;
-    //specular += ibl_radiance_ggx(N, V, roughness, f0) * 0.2;
+    diffuse += ibl_radiance_lambertian(N, V, roughness, c_diff, f0) * 0.2;
+    specular += ibl_radiance_ggx(N, V, roughness, f0) * 0.2;
 
     diffuse *= occlusion;
     specular *= occlusion;

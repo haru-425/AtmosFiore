@@ -183,12 +183,19 @@ void AreaLightManager::debug_render()
 			}
 		}
 
-		// 方向を正規化
+		// direction は照射方向なので反転して面法線化（シェーダーと同じ処理）
 		dx::XMVECTOR dir = dx::XMLoadFloat3(&l.direction);
 		dir = dx::XMVector3Normalize(dir);
+		dx::XMVECTOR D = dx::XMVectorNegate(dir); // 反転して面法線
+
+		// right を面へ射影（シェーダーと同じ処理）
 		dx::XMVECTOR right = dx::XMLoadFloat3(&l.right);
-		right = dx::XMVector3Normalize(right);
-		dx::XMVECTOR up = dx::XMVector3Cross(dir, right);
+		dx::XMVECTOR dot = dx::XMVector3Dot(right, D);
+		dx::XMVECTOR R = dx::XMVectorSubtract(right, dx::XMVectorMultiply(D, dot));
+		R = dx::XMVector3Normalize(R);
+
+		// up ベクトルの計算順序をシェーダーと一致させる
+		dx::XMVECTOR U = dx::XMVector3Cross(R, D);
 
 		// スケール行列
 		DirectX::XMMATRIX S = DirectX::XMMatrixScaling(l.width, l.height, 0.1f);
@@ -196,13 +203,13 @@ void AreaLightManager::debug_render()
 		// 回転行列（方向ベクトルに合わせる）
 		dx::XMFLOAT4X4 rotationMatrix;
 		dx::XMFLOAT3X3 rotation3x3;
-		dx::XMFLOAT3 rightFloat, upFloat, dirFloat;
-		DirectX::XMStoreFloat3(&rightFloat, right);
-		DirectX::XMStoreFloat3(&upFloat, up);
-		DirectX::XMStoreFloat3(&dirFloat, dir);
-		rotation3x3._11 = rightFloat.x; rotation3x3._12 = rightFloat.y; rotation3x3._13 = rightFloat.z;
-		rotation3x3._21 = upFloat.x;    rotation3x3._22 = upFloat.y;    rotation3x3._23 = upFloat.z;
-		rotation3x3._31 = dirFloat.x;   rotation3x3._32 = dirFloat.y;   rotation3x3._33 = dirFloat.z;
+		dx::XMFLOAT3 RFloat, UFloat, DFloat;
+		DirectX::XMStoreFloat3(&RFloat, R);
+		DirectX::XMStoreFloat3(&UFloat, U);
+		DirectX::XMStoreFloat3(&DFloat, D);
+		rotation3x3._11 = RFloat.x; rotation3x3._12 = RFloat.y; rotation3x3._13 = RFloat.z;
+		rotation3x3._21 = UFloat.x; rotation3x3._22 = UFloat.y; rotation3x3._23 = UFloat.z;
+		rotation3x3._31 = DFloat.x; rotation3x3._32 = DFloat.y; rotation3x3._33 = DFloat.z;
 		dx::XMMATRIX rotation = DirectX::XMLoadFloat3x3(&rotation3x3);
 
 		// 平行移動行列（ライトの位置へ）
