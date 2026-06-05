@@ -1,0 +1,275 @@
+---
+title: "技術解説：Shadow Mapping"
+description: ライト視点からの深度情報を用いたリアルタイム影の描画。
+sidebar:
+  order: 4
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+室内空間における物体の影をリアルタイムに描画するため、AtmosFioreでは **Shadow Mapping（シャドウマッピング）** を採用しています。
+
+---
+
+## 📐 Shadow Mappingの基本概念
+
+Shadow Mappingは、ライト視点からシーンをレンダリングして深度情報を記録し、カメラ視点からその深度情報を参照して影を判定する技術です。
+
+### 処理フロー
+
+1. **シャドウマップ生成**: ライト視点からシーンをレンダリングし、深度情報をテクスチャ（シャドウマップ）に記録
+2. **影の判定**: カメラ視点から各ピクセルの深度をライト視点に変換し、シャドウマップと比較して影を判定
+3. **影の合成**: 判定結果を用いてライティング計算に影を適用
+
+---
+
+## 💻 C++実装
+
+以下は、AtmosFioreのシャドウマップクラスの実装です。
+
+```cpp
+/**
+ * @brief シャドウマップクラス
+ *
+ * ライト視点からの深度情報を記録するための深度テクスチャを管理する。
+ * 生成した深度はシェーダーからSRVとして参照され、シャドウ判定に使用される。
+ */
+class shadow_map
+{
+public:
+    /**
+     * @brief コンストラクタ
+     *
+     * シャドウマップ用の深度テクスチャを生成する。
+     *
+     * @param device D3D11デバイス
+     * @param width シャドウマップ幅
+     * @param height シャドウマップ高さ
+     */
+    shadow_map(ID3D11Device* device, uint32_t width, uint32_t height);
+
+    /**
+     * @brief シャドウマップをクリア
+     *
+     * @param immediate_context デバイスコンテキスト
+     * @param depth クリア深度値（通常1.0）
+     */
+    void clear(ID3D11DeviceContext* immediate_context, float depth = 1);
+
+    /**
+     * @brief シャドウマップ描画開始
+     *
+     * 現在のレンダーターゲットを保存し、深度専用描画に切り替える。
+     *
+     * @param immediate_context デバイスコンテキスト
+     */
+    void activate(ID3D11DeviceContext* immediate_context);
+
+    /**
+     * @brief シャドウマップ描画終了
+     *
+     * activate()前のレンダーターゲット状態を復元する。
+     *
+     * @param immediate_context デバイスコンテキスト
+     */
+    void deactivate(ID3D11DeviceContext* immediate_context);
+
+    /**
+     * @brief 深度マップ取得
+     *
+     * @return ID3D11ShaderResourceView*
+     */
+    ID3D11ShaderResourceView* get_depth_map() { return shader_resource_view.Get(); }
+
+private:
+    /// 深度ステンシルビュー（描画用）
+    Microsoft::WRL::ComPtr<ID3D11DepthStencilView> depth_stencil_view;
+
+    /// 深度をシェーダーから参照するためのSRV
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> shader_resource_view;
+
+    /// シャドウ描画用ビューポート
+    D3D11_VIEWPORT viewport;
+};
+```
+
+### シャドウマッピング管理クラス
+
+```cpp
+/**
+ * @brief シャドウマッピング管理クラス
+ *
+ * ライト視点から深度マップ（シャドウマップ）を生成し、
+ * それを用いてシーンに影を適用する。
+ */
+class shadow
+{
+public:
+    /**
+     * @brief シャドウマップ生成開始
+     *
+     * ライト視点に切り替え、深度書き込み用状態をセットする。
+     */
+    void make_shadow_begin(PointShadowFace face = PointShadowFace::Front);
+    void make_directional_shadow_begin();
+
+    /**
+     * @brief シャドウマップ生成終了
+     *
+     * 通常のカメラ視点・レンダリング状態に戻す。
+     */
+    void make_shadow_end();
+
+    /**
+     * @brief シャドウ適用処理
+     *
+     * シャドウマップを参照し、影を合成した最終画像を生成する。
+     *
+     * @param immediate_context デバイスコンテキスト
+     * @param color_map 入力カラー（通常描画結果）
+     */
+    void make(ID3D11DeviceContext* immediate_context, ID3D11ShaderResourceView* color_map);
+
+private:
+    ///< ポイントライト用双放物面シャドウマップ（前後）
+    std::unique_ptr<shadow_map> point_shadow_front;
+    std::unique_ptr<shadow_map> point_shadow_back;
+    std::unique_ptr<shadow_map> directional_shadow_map;
+
+    ///< シャドウマップ解像度
+    const uint32_t shadowmap_width = 2048;
+    const uint32_t shadowmap_height = 2048;
+};
+```
+
+---
+
+## 💻 HLSL実装
+
+以下は、AtmosFioreのディファードライティングパイプラインで使用されるシャドウマッピングのHLSL実装コードです。
+
+### ディレクショナルライトのシャドウ
+
+```hlsl
+// ディレクショナルライトのシャドウサンプリング
+float SampleDirectionalShadow(Texture2D shadow_map, float3 position, float3 N, float3 L)
+{
+    // ライト空間への変換行列
+    float4 light_space_pos = mul(float4(position, 1.0f), light_view_projection);
+    
+    // 正規化デバイス座標（NDC）へ変換
+    float3 ndc = light_space_pos.xyz / light_space_pos.w;
+    
+    // NDCからテクスチャ座標へ変換
+    float2 shadow_uv = ndc.xy * 0.5f + 0.5f;
+    shadow_uv.y = 1.0f - shadow_uv.y; // Y座標を反転
+    
+    // 深度比較
+    float shadow_depth = shadow_map.Sample(sampler_states[POINT_CLAMP], shadow_uv).r;
+    float current_depth = ndc.z;
+    
+    // バイアスを適用してシャドウアクネを軽減
+    float bias = 0.003f;
+    float shadow = current_depth - bias > shadow_depth ? 0.0f : 1.0f;
+    
+    return shadow;
+}
+```
+
+### ポイントライトのシャドウ（双放物面）
+
+```hlsl
+// ポイントライトのシャドウサンプリング（双放物面）
+float SamplePointLightShadow(
+    Texture2D shadow_front_map,
+    Texture2D shadow_back_map,
+    float3 position,
+    float3 N,
+    float3 L,
+    int light_index)
+{
+    // ライトからの相対位置
+    float3 light_to_pixel = position - pointLights[light_index].position;
+    
+    // 双放物面変換
+    float3 abs_light_to_pixel = abs(light_to_pixel);
+    float dominant_axis = max(max(abs_light_to_pixel.x, abs_light_to_pixel.y), abs_light_to_pixel.z);
+    
+    // 正規化
+    float3 light_space_pos = light_to_pixel / dominant_axis;
+    
+    // 前面か後面かを判定
+    bool is_front_face = light_space_pos.z > 0.0f;
+    
+    // テクスチャ座標へ変換
+    float2 shadow_uv = light_space_pos.xy * 0.5f + 0.5f;
+    shadow_uv.y = 1.0f - shadow_uv.y;
+    
+    // 深度比較
+    float shadow_depth = is_front_face 
+        ? shadow_front_map.Sample(sampler_states[POINT_CLAMP], shadow_uv).r
+        : shadow_back_map.Sample(sampler_states[POINT_CLAMP], shadow_uv).r;
+    
+    float current_depth = light_space_pos.z;
+    
+    // バイアスを適用
+    float bias = 0.003f;
+    float shadow = current_depth - bias > shadow_depth ? 0.0f : 1.0f;
+    
+    return shadow;
+}
+```
+
+---
+
+## 🎨 ディファードライティングでのシャドウ適用
+
+ディファードライティングパイプラインでは、G-Bufferから位置と法線を取得し、シャドウマップを参照して影を適用します。
+
+```hlsl
+// ディレクショナルライトのライティング（シャドウ適用）
+float3 L = normalize(-directional_light_direction.xyz);
+float3 Li = directional_light_color.rgb * 5;
+float NoL = max(0.0f, dot(N, L));
+if (NoL > 0.0f)
+{
+    float3 H = normalize(V + L);
+    float NoH = max(0.0f, dot(N, H));
+    float HoV = max(0.0f, dot(H, V));
+    
+    // シャドウサンプリング
+    float directional_shadow = SampleDirectionalShadow(directional_shadow_map, position, N, L);
+    
+    // シャドウを適用してライティング計算
+    diffuse += Li * directional_shadow * NoL * brdf_lambertian(f0, f90, c_diff, HoV);
+    specular += Li * directional_shadow * NoL * brdf_specular_ggx(f0, f90, alpha_roughness, HoV, NoL, NoV, NoH);
+}
+```
+
+---
+
+## 🔧 実装のポイント
+
+### 1. 双放物面シャドウマップ
+
+ポイントライトからの影を描画するため、双放物面シャドウマップを採用しています。これにより、1回のパスで全方位の影を記録できます。前面（Front）と後面（Back）の2つのシャドウマップを使用し、ピクセルがどちらの面にあるかを判定して適切なマップを参照します。
+
+### 2. シャドウバイアス
+
+シャドウアクネ（影のエッジに発生するノイズ）を軽減するため、深度比較時にバイアスを適用します。バイアス値はImGuiでリアルタイムに調整可能で、シーンに応じて最適な値を設定できます。
+
+### 3. 高解像度シャドウマップ
+
+シャドウマップの解像度を2048x2048に設定し、高品質な影を実現しています。解像度はImGuiで調整可能で、パフォーマンスと画質のバランスを取ることができます。
+
+---
+
+## 📝 注意点
+
+<Aside type="caution">
+  同一リソースをDSVとSRVとして同時にバインドしてはならない（D3D11制約）。シャドウマップ生成中はSRVとしてバインドせず、生成後にDSVを解除してからSRVとしてバインドしてください。
+</Aside>
+
+<Aside type="note">
+  シャドウマップは深度専用レンダリング（カラーRTVは使用しない）を行います。シェーダー側はシャドウ用（深度出力のみ）に切り替えておく必要があります。
+</Aside>

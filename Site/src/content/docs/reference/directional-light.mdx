@@ -1,0 +1,165 @@
+---
+title: "技術解説：Directional Light（ディレクショナルライト）"
+description: 平行光（太陽光など）をリアルタイムにシミュレートするディレクショナルライトの実装。
+sidebar:
+  order: 14
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+平行光（太陽光など）をリアルタイムにシミュレートするため、AtmosFioreでは **Directional Light（ディレクショナルライト）** を採用しています。
+
+---
+
+## 📐 Directional Lightの基本概念
+
+Directional Lightは、無限遠から特定の方向に平行に光が放射される光源をシミュレートする技術です。これにより、太陽光のような平行光をリアルに表現できます。
+
+### 特徴
+
+- 光源の位置は無限遠とみなされるため、距離減衰がない
+- 光は平行に放射されるため、すべてのピクセルで同じ方向から光が来る
+- シャドウマッピングには直交投影を使用する
+
+---
+
+## 💻 HLSL実装
+
+以下は、AtmosFioreのディレクショナルライティングで使用されるHLSLシェーダーコードです。
+
+### ディレクショナルライトのライティング計算
+
+```hlsl
+// deferred_lighting_ps.hlsl
+// ディレクショナルライト
+float3 L = normalize(-directional_light_direction.xyz);
+float3 Li = directional_light_color.rgb * 5;
+float NoL = max(0.0f, dot(N, L));
+if (NoL > 0.0f)
+{
+    float3 H = normalize(V + L);
+    float NoH = max(0.0f, dot(N, H));
+    float HoV = max(0.0f, dot(H, V));
+    float directional_shadow = SampleDirectionalShadow(directional_shadow_map, position, N, L);
+    
+    diffuse += Li * directional_shadow * NoL * brdf_lambertian(f0, f90, c_diff, HoV);
+    specular += Li * directional_shadow * NoL * brdf_specular_ggx(f0, f90, alpha_roughness, HoV, NoL, NoV, NoH);
+}
+```
+
+---
+
+## 🎨 シャドウマッピング
+
+ディレクショナルライトのシャドウマッピングには、直交投影を使用します。これにより、平行光の影を正確に表現できます。
+
+### シャドウマップ生成
+
+```cpp
+// shadow.h
+void shadow::make_directional_shadow_begin()
+{
+    // 直交投影行列の作成
+    DirectX::XMMATRIX projection = DirectX::XMMatrixOrthographicOffCenterLH(
+        -light_view_size, light_view_size,
+        -light_view_size, light_view_size,
+        light_view_near_z, light_view_far_z
+    );
+    
+    // ビュー行列の作成
+    DirectX::XMVECTOR eye = DirectX::XMVectorSet(
+        light_view_focus.x - directional_light_direction.x * light_view_distance,
+        light_view_focus.y - directional_light_direction.y * light_view_distance,
+        light_view_focus.z - directional_light_direction.z * light_view_distance,
+        1.0f
+    );
+    DirectX::XMVECTOR target = DirectX::XMVectorSet(
+        light_view_focus.x,
+        light_view_focus.y,
+        light_view_focus.z,
+        1.0f
+    );
+    DirectX::XMVECTOR up = DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+    
+    DirectX::XMMATRIX view = DirectX::XMMatrixLookAtLH(eye, target, up);
+    
+    // ビュー投影行列の計算
+    DirectX::XMMATRIX view_projection = view * projection;
+    
+    // シャドウマップ描画開始
+    directional_shadow_map->activate(immediate_context);
+    
+    // ビューポート設定
+    D3D11_VIEWPORT vp = {};
+    vp.Width = static_cast<float>(shadowmap_width);
+    vp.Height = static_cast<float>(shadowmap_height);
+    vp.MinDepth = 0.0f;
+    vp.MaxDepth = 1.0f;
+    vp.TopLeftX = 0.0f;
+    vp.TopLeftY = 0.0f;
+    immediate_context->RSSetViewports(1, &vp);
+    
+    // ビュー投影行列をシェーダーに設定
+    // ...
+}
+```
+
+### シャドウサンプリング
+
+```hlsl
+// ディレクショナルライトのシャドウサンプリング
+float SampleDirectionalShadow(Texture2D shadow_map, float3 position, float3 N, float3 L)
+{
+    // ライト空間への変換行列
+    float4 light_space_pos = mul(float4(position, 1.0f), light_view_projection);
+    
+    // 正規化デバイス座標（NDC）へ変換
+    float3 ndc = light_space_pos.xyz / light_space_pos.w;
+    
+    // NDCからテクスチャ座標へ変換
+    float2 shadow_uv = ndc.xy * 0.5f + 0.5f;
+    shadow_uv.y = 1.0f - shadow_uv.y; // Y座標を反転
+    
+    // 深度比較
+    float shadow_depth = shadow_map.Sample(sampler_states[POINT_CLAMP], shadow_uv).r;
+    float current_depth = ndc.z;
+    
+    // バイアスを適用してシャドウアクネを軽減
+    float bias = 0.003f;
+    float shadow = current_depth - bias > shadow_depth ? 0.0f : 1.0f;
+    
+    return shadow;
+}
+```
+
+---
+
+## 🔧 実装のポイント
+
+### 1. 直交投影
+
+ディレクショナルライトのシャドウマッピングには、直交投影を使用します。これにより、平行光の影を正確に表現できます。直交投影では、遠近法による歪みが発生しないため、平行光の影を正確に計算できます。
+
+### 2. 距離減衰なし
+
+ディレクショナルライトは、光源が無限遠とみなされるため、距離減衰がありません。すべてのピクセルで同じ強度の光が届きます。
+
+### 3. シャドウバイアス
+
+シャドウアクネ（影のエッジに発生するノイズ）を軽減するため、深度比較時にバイアスを適用します。バイアス値はImGuiでリアルタイムに調整可能です。
+
+---
+
+## 📝 注意点
+
+<Aside type="note">
+  ディレクショナルライトは、光源の位置が無限遠とみなされるため、距離減衰がありません。すべてのピクセルで同じ強度の光が届きます。
+</Aside>
+
+<Aside type="note">
+  ディレクショナルライトのシャドウマッピングには、直交投影を使用します。これにより、平行光の影を正確に表現できます。
+</Aside>
+
+<Aside type="caution">
+  ディレクショナルライトのシャドウマップは、直交投影の範囲（light_view_size）を適切に設定する必要があります。範囲が狭すぎると影が切れ、広すぎると解像度が不足します。
+</Aside>

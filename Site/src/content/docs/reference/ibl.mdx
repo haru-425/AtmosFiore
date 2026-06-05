@@ -1,0 +1,190 @@
+---
+title: "技術解説：Image-Based Lighting (IBL)"
+description: HDR環境マップを用いた物理的に正確な環境光のシミュレーション。
+sidebar:
+  order: 2
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+室内空間における間接光（光のバウンス）をリアルタイムにシミュレートするため、AtmosFioreでは **Image-Based Lighting（IBL: イメージベースドライティング）** を採用しています。
+
+---
+
+## 📐 IBLの基本概念
+
+IBLは、事前にレンダリングまたはキャプチャしたHDR環境マップ（キューブマップ）を用いて、シーン内の物体に環境光を照射する技術です。これにより、窓から差し込む光が床や壁に反射して部屋全体を照らすような、複雑な間接光の挙動をリアルタイムに計算できます。
+
+### IBLの構成要素
+
+IBLは以下の3つのテクスチャで構成されます：
+
+1. **Environment Map（環境マップ）**: HDRフォーマットのキューブマップ。シーンの環境を360度全方位で表現。
+2. **Diffuse IEM（Irradiance Environment Map）**: 拡散反射用の事前フィルタリングされた環境マップ。低解像度で、各方向からの平均的な放射照度を格納。
+3. **Specular PMREM（Prefiltered Environment Map）**: 鏡面反射用の事前フィルタリングされた環境マップ。粗さ（Roughness）に応じた複数のミップマップレベルを持つ。
+4. **BRDF LUT（Look-Up Table）**: フレネル項と幾何遮蔽関数の積を事前計算した2Dテクスチャ。
+
+---
+
+## 💻 C++実装
+
+以下は、AtmosFioreのIBLリソース管理クラスの実装です。
+
+```cpp
+/**
+ * @brief Image-Based Lighting（IBL）リソース管理クラス
+ *
+ * PBR（Physically Based Rendering）で使用する環境マップ群を管理する。
+ * HDR環境マップ、拡散IBL、スペキュラIBL、BRDF LUTをまとめて扱う。
+ */
+class IBL
+{
+public:
+    /**
+     * @brief IBLで使用するテクスチャ種別
+     */
+    enum TextureType {
+        Environment = 0,   ///< HDR環境マップ（スカイボックス）
+        DiffuseIEM = 1,    ///< 拡散IBL（Irradiance Map）
+        SpecularPMREM = 2, ///< スペキュラIBL（Prefiltered Environment Map）
+        LUT_GGX = 3,       ///< BRDF LUT（GGX用）
+        TextureCount       ///< テクスチャ数
+    };
+
+    /**
+     * @brief IBLテクスチャを初期化
+     *
+     * 指定パスから各種IBLテクスチャをロードし、SRVとして保持する。
+     *
+     * @param device D3D11デバイス
+     * @param basePath テクスチャファイルのベースパス
+     * @return HRESULT 成功/失敗コード
+     */
+    static HRESULT Initialize(
+        ID3D11Device* device,
+        const std::wstring& basePath);
+
+    /**
+     * @brief IBLテクスチャをシェーダーにバインド
+     *
+     * ピクセルシェーダーに各IBLテクスチャをバインドする。
+     *
+     * @param context デバイスコンテキスト
+     */
+    static void Bind(ID3D11DeviceContext* context);
+
+private:
+    /// 各IBLテクスチャのShaderResourceView
+    static Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_srvs[TextureCount];
+};
+```
+
+---
+
+## 💻 HLSL実装
+
+以下は、AtmosFioreのディファードライティングパイプラインで使用されるIBLのHLSL実装コードです。
+
+```hlsl
+// IBLによる拡散反射（ランベリアン）
+float3 ibl_radiance_lambertian(float3 N, float3 V, float roughness, float3 c_diff, float3 f0)
+{
+    // 拡散IBLから放射照度をサンプリング
+    float3 irradiance = irradiance_map.Sample(sampler_states[LINEAR_CLAMP], N).rgb;
+    
+    // ランベリアンBRDFによる拡散反射
+    return irradiance * c_diff;
+}
+
+// IBLによる鏡面反射（GGX）
+float3 ibl_radiance_ggx(float3 N, float3 V, float roughness, float3 f0)
+{
+    // ビュー方向と法線の内積
+    float NoV = max(dot(N, V), 0.0f);
+    
+    // 粗さに応じたミップマップレベルを計算
+    float mipLevel = roughness * (MAX_MIP_LEVEL - 1.0f);
+    
+    // 反射ベクトルを計算
+    float3 R = reflect(-V, N);
+    
+    // スペキュラIBLから事前フィルタリングされた環境光をサンプリング
+    float3 prefilteredColor = prefilter_map.SampleLevel(sampler_states[LINEAR_CLAMP], R, mipLevel).rgb;
+    
+    // BRDF LUTからフレネル項と幾何遮蔽関数の積をサンプリング
+    float2 brdf = brdf_lut.Sample(sampler_states[LINEAR_CLAMP], float2(NoV, roughness)).rg;
+    
+    // フレネル項（Schlick近似）
+    float3 F = f0 + (1.0f - f0) * pow(1.0f - NoV, 5.0f);
+    
+    // 鏡面反射の計算
+    return prefilteredColor * (F * brdf.x + brdf.y);
+}
+```
+
+---
+
+## 🎨 ディファードライティングでのIBL適用
+
+ディファードライティングパイプラインでは、G-Bufferから法線と粗さを取得し、IBLを適用します。
+
+```hlsl
+// ディファードライティングパスでのIBL適用
+float4 main(VS_OUT pin) : SV_TARGET
+{
+    // G-Bufferから法線と粗さを取得
+    float4 sampled = gbuffer0.SampleLevel(sampler_states[POINT_CLAMP], pin.texcoord, 0);
+    float3 N = normalize(sampled.xyz);
+    float roughness = sampled.w;
+    
+    // G-Bufferからアルベドと金属度を取得
+    sampled = gbuffer1.SampleLevel(sampler_states[POINT_CLAMP], pin.texcoord, 0);
+    float3 basecolor = sampled.xyz;
+    float metallic = sampled.w;
+    
+    // ビュー方向
+    float3 V = normalize(camera_position.xyz - position);
+    
+    // 非金属（プラスチックや木など）の基本反射率は 0.04 とする
+    float3 f0 = lerp(0.04f, basecolor, metallic);
+    float3 c_diff = lerp(basecolor, 0.0f, metallic);
+    
+    // IBLによる拡散反射
+    float3 diffuse = ibl_radiance_lambertian(N, V, roughness, c_diff, f0) * 0.2;
+    
+    // IBLによる鏡面反射
+    float3 specular = ibl_radiance_ggx(N, V, roughness, f0) * 0.2;
+    
+    // 最終光強度
+    float3 Lo = diffuse + specular + emissive;
+    return float4(Lo, 1.0f);
+}
+```
+
+---
+
+## 🔧 実装のポイント
+
+### 1. HDR環境マップの使用
+
+IBLではHDRフォーマット（例：RGB16F）の環境マップを使用することで、高輝度光源（太陽、窓からの直射光）を正確に表現できます。これにより、金属表面の鋭いハイライトや、ガラス窓の強い反射をリアルに描画できます。
+
+### 2. 事前フィルタリング
+
+スペキュラIBLは、粗さに応じた複数のミップマップレベルを持つ事前フィルタリングされた環境マップです。粗い表面では低解像度のミップマップレベルを、滑らかな表面では高解像度のミップマップレベルを使用することで、リアルタイムで高品質な鏡面反射を実現します。
+
+### 3. BRDF LUTによる最適化
+
+フレネル項と幾何遮蔽関数の積を事前計算したBRDF LUTを使用することで、ピクセルシェーダーでの計算コストを大幅に削減できます。LUTは2Dテクスチャとして格納され、法線とビュー方向の内積（NoV）と粗さをキーとしてサンプリングします。
+
+---
+
+## 📝 注意点
+
+<Aside type="caution">
+  IBLテクスチャは、同時にRTV/UAVとしてバインドしてはいけません（D3D11制約）。IBLテクスチャはSRVとしてのみ使用してください。
+</Aside>
+
+<Aside type="note">
+  IBLは静的な環境光を表現するため、動的な光源（ポイントライト、スポットライト）とは別に扱う必要があります。ディファードライティングパイプラインでは、IBLをライティングパスの最後に適用することで、動的な光源と静的な環境光を組み合わせることができます。
+</Aside>

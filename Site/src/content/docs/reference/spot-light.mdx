@@ -1,0 +1,158 @@
+---
+title: "技術解説：Spot Light（スポットライト）"
+description: 方向性を持つ点光源からの光をリアルタイムにシミュレートするスポットライトの実装。
+sidebar:
+  order: 13
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+方向性を持つ点光源（スポットライト、懐中電灯など）からの光をリアルタイムにシミュレートするため、AtmosFioreでは **Spot Light（スポットライト）** を採用しています。
+
+---
+
+## 📐 Spot Lightの基本概念
+
+Spot Lightは、一点から特定の方向に光が放射される光源をシミュレートする技術です。これにより、スポットライトや懐中電灯のような方向性を持つ光源をリアルに表現できます。
+
+### 角度減衰
+
+Spot Lightでは、光源の方向からの角度に応じて光の強度が減衰します。AtmosFioreでは、角度減衰を以下の式で計算します。
+
+```
+angleAttenuation = smoothstep(cosOuter, cosInner, cosAngle)
+```
+
+### 距離減衰
+
+Spot Lightでは、光源からの距離に応じて光の強度も減衰します。
+
+```
+distanceAttenuation = (1.0 - (distance / radius))^2
+```
+
+---
+
+## 💻 HLSL実装
+
+以下は、AtmosFioreのスポットライティングで使用されるHLSLシェーダーコードです。
+
+### スポットライトのライティング計算
+
+```hlsl
+// deferred_lighting_ps.hlsl
+// スポットライト
+for (int i = 0; i < numSpotLights; ++i)
+{
+    if (spotLights[i].intensity <= 0.0f || spotLights[i].radius <= 0.0f)
+    {
+        continue;
+    }
+
+    float3 light_vector = spotLights[i].position - position;
+    float dist = length(light_vector);
+    if (dist >= spotLights[i].radius)
+    {
+        continue;
+    }
+
+    float3 Ls = light_vector / max(dist, 0.0001f);
+    float spotNoL = max(0.0f, dot(N, Ls));
+    if (spotNoL <= 0.0f)
+    {
+        continue;
+    }
+
+    // 角度減衰の計算
+    float3 lightDir = normalize(spotLights[i].direction);
+    float cosAngle = dot(-Ls, lightDir);
+    float cosInner = cos(spotLights[i].innerAngle);
+    float cosOuter = cos(spotLights[i].outerAngle);
+    
+    float spotAttenuation = 1.0f;
+    if (cosAngle < cosOuter)
+    {
+        spotAttenuation = 0.0f;
+    }
+    else if (cosAngle < cosInner)
+    {
+        spotAttenuation = smoothstep(cosOuter, cosInner, cosAngle);
+    }
+
+    float distanceAttenuation = pow(max(0.0f, 1.0f - (dist / spotLights[i].radius)), 2.0f);
+    float totalAttenuation = spotAttenuation * distanceAttenuation;
+    
+    if (totalAttenuation <= 0.0f)
+    {
+        continue;
+    }
+
+    float3 spotLi = spotLights[i].color * spotLights[i].intensity * totalAttenuation;
+    float3 H = normalize(V + Ls);
+    float NoH = max(0.0f, dot(N, H));
+    float HoV = max(0.0f, dot(H, V));
+
+    diffuse += spotLi * spotNoL * brdf_lambertian(f0, f90, c_diff, HoV);
+    specular += spotLi * spotNoL * brdf_specular_ggx(f0, f90, alpha_roughness, HoV, spotNoL, NoV, NoH);
+}
+```
+
+---
+
+## 🎨 角度減衰の詳細
+
+スポットライトの角度減衰は、内角（innerAngle）と外角（outerAngle）の間でスムーズに遷移します。
+
+```hlsl
+// 角度減衰の計算
+float cosAngle = dot(-Ls, lightDir);
+float cosInner = cos(spotLights[i].innerAngle);
+float cosOuter = cos(spotLights[i].outerAngle);
+
+float spotAttenuation = 1.0f;
+if (cosAngle < cosOuter)
+{
+    spotAttenuation = 0.0f; // 外角外：光が届かない
+}
+else if (cosAngle < cosInner)
+{
+    spotAttenuation = smoothstep(cosOuter, cosInner, cosAngle); // 内角と外角の間：スムーズに減衰
+}
+// 内角内：光が届く
+```
+
+---
+
+## 🔧 実装のポイント
+
+### 1. 角度減衰
+
+光源の方向からの角度に応じて光の強度を減衰させます。内角と外角の間でスムーズに遷移することで、自然なスポットライトの境界を実現できます。
+
+### 2. 距離減衰
+
+光源からの距離に応じて光の強度も減衰させます。距離減衰は、光源の半径内でのみ適用され、半径外では光が届かないようにします。
+
+### 3. 角度減衰と距離減衰の組み合わせ
+
+角度減衰と距離減衰を組み合わせることで、スポットライトの方向性と距離による減衰を同時に表現できます。
+
+```hlsl
+float totalAttenuation = spotAttenuation * distanceAttenuation;
+```
+
+---
+
+## 📝 注意点
+
+<Aside type="note">
+  スポットライトは、内角と外角の間でスムーズに減衰します。これにより、スポットライトの境界を自然に表現できます。
+</Aside>
+
+<Aside type="note">
+  スポットライトは、方向性を持つため、光源の方向を正しく設定する必要があります。方向は正規化されたベクトルで表現されます。
+</Aside>
+
+<Aside type="caution">
+  スポットライトの角度減衰は、コサイン値で計算されます。角度はラジアンで指定する必要があります。
+</Aside>

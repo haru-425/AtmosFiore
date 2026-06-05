@@ -1,0 +1,233 @@
+---
+title: "技術解説：Adaptation（自動露出）"
+description: シーンの輝度に応じた自動露出調整による目の順応シミュレーション。
+sidebar:
+  order: 8
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+シーンの輝度に応じて露出を自動調整し、目の順応をシミュレートするため、AtmosFioreでは **Adaptation（自動露出）** を採用しています。
+
+---
+
+## 📐 Adaptationの基本概念
+
+Adaptationは、シーンの平均輝度を計算し、目の順応をシミュレートして露出を自動調整する技術です。これにより、暗い場所から明るい場所に移動した際の目の順応を再現できます。
+
+### 処理フロー
+
+1. **シーン輝度の計算**: シーンの平均輝度を計算
+2. **露出値の更新**: 前フレームの露出値と目標露出値の間を補間
+3. **露出調整**: 計算された露出値をHDR画像に適用
+4. **Tone Mappingへの入力**: 露出調整済みのHDR画像をTone Mappingに入力
+
+---
+
+## 💻 C++実装
+
+以下は、AtmosFioreのAdaptationクラスの実装です。
+
+```cpp
+/**
+ * @brief 自動露出クラス
+ *
+ * シーンの輝度に応じて露出を自動調整し、目の順応をシミュレートする。
+ */
+class Adaptation
+{
+public:
+    // シェーダー定数バッファ構造体（HLSL と同期）
+    struct AdaptationConstants
+    {
+        float delta_time;      // フレーム間の経過時間（秒）
+        float speed_to_light;  // 明るい場所への順応スピード（秒^-1）
+        float speed_to_dark;   // 暗い場所への順応スピード（秒^-1）
+        float target_lum;      // 目標輝度（基準値: 0.18 = 中間グレー）
+    };
+
+    // 露出値のクランプ範囲定数
+    static constexpr float MIN_EXPOSURE = 0.05f;
+    static constexpr float MAX_EXPOSURE = 10.0f;
+    static constexpr float MIN_LUMINANCE = 0.001f;
+
+    Adaptation(ID3D11Device* device, uint32_t width, uint32_t height);
+
+    // 自動露出を計算し、入力画像に適用して露出調整済みのHDRバッファを出力する
+    void make(ID3D11DeviceContext* immediate_context, ID3D11ShaderResourceView* input_hdr_srv);
+
+    // 露出調整済みのHDRバッファを取得 (Format: R16G16B16A16_FLOAT)
+    ID3D11ShaderResourceView* get_color_map() const { return color_map->GetColorMap(); }
+
+    // 調整パラメータ
+    float delta_time = 0.0f;
+    float speed_to_light = 2.0f;
+    float speed_to_dark = 1.0f;
+    float target_lum = 0.18f;
+
+private:
+    std::unique_ptr<FullscreenQuad> bit_block_transfer;
+    std::unique_ptr<Framebuffer>     color_map;
+
+    // 露出値を1フレーム保持・更新するための1x1テクスチャ (R32_FLOAT)
+    Microsoft::WRL::ComPtr<ID3D11Texture2D>           exposure_texture;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>  exposure_srv;
+    Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> exposure_uav;
+
+    // 定数バッファ
+    Microsoft::WRL::ComPtr<ID3D11Buffer> cb_adaptation;
+};
+```
+
+---
+
+## 💻 HLSL実装
+
+以下は、AtmosFioreのAdaptation処理で使用されるHLSLシェーダーコードです。
+
+### 輝度計算シェーダー（Compute Shader）
+
+```hlsl
+// adaptation_cs.hlsl - 輝度計算と露出更新
+RWTexture2D<float> exposure_output : register(u0);
+Texture2D<float4> hdr_input : register(t0);
+cbuffer AdaptationCB : register(b0)
+{
+    float delta_time;
+    float speed_to_light;
+    float speed_to_dark;
+    float target_lum;
+};
+
+[numthreads(1, 1, 1)]
+void main(uint3 DTid : SV_DispatchThreadID)
+{
+    // シーンの平均輝度を計算（簡易版）
+    // 実際にはMipmapを使用して効率的に計算
+    float total_luminance = 0.0f;
+    uint width, height;
+    hdr_input.GetDimensions(width, height);
+    
+    for (uint y = 0; y < height; y++)
+    {
+        for (uint x = 0; x < width; x++)
+        {
+            float4 color = hdr_input[uint2(x, y)];
+            float luminance = dot(color.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+            total_luminance += luminance;
+        }
+    }
+    
+    float avg_luminance = total_luminance / (width * height);
+    
+    // 最小輝度でクランプ
+    avg_luminance = max(avg_luminance, MIN_LUMINANCE);
+    
+    // 目標露出値を計算
+    float target_exposure = target_lum / avg_luminance;
+    
+    // 前フレームの露出値を取得
+    float current_exposure = exposure_output[uint2(0, 0)];
+    
+    // 順応スピードを決定
+    float speed = (target_exposure > current_exposure) ? speed_to_light : speed_to_dark;
+    
+    // 露出値を更新（線形補間）
+    float new_exposure = lerp(current_exposure, target_exposure, 1.0f - exp(-speed * delta_time));
+    
+    // 露出値をクランプ
+    new_exposure = clamp(new_exposure, MIN_EXPOSURE, MAX_EXPOSURE);
+    
+    // 露出値を出力
+    exposure_output[uint2(0, 0)] = new_exposure;
+}
+```
+
+### 露出適用シェーダー（Pixel Shader）
+
+```hlsl
+// adaptation_ps.hlsl - 露出適用
+Texture2D<float4> hdr_input : register(t0);
+Texture2D<float> exposure_map : register(t1);
+SamplerState sampler_state : register(s0);
+
+float4 main(VS_OUT pin) : SV_TARGET
+{
+    // HDR画像をサンプリング
+    float4 hdr_color = hdr_input.Sample(sampler_state, pin.texcoord);
+    
+    // 露出値を取得
+    float exposure = exposure_map.Sample(sampler_state, float2(0.5f, 0.5f));
+    
+    // 露出を適用
+    float3 adapted_color = hdr_color.rgb * exposure;
+    
+    return float4(adapted_color, hdr_color.a);
+}
+```
+
+---
+
+## 🎨 処理の詳細
+
+### 1. 輝度計算
+
+シーンの平均輝度を計算します。実際の実装では、Mipmapを使用して効率的に計算します。最上位のミップマップレベル（1x1ピクセル）がシーン全体の平均輝度を表します。
+
+```hlsl
+// 輝度計算（Mipmapを使用）
+float luminance = dot(color.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+```
+
+### 2. 露出値の更新
+
+前フレームの露出値と目標露出値の間を線形補間します。明るい場所への順応と暗い場所への順応で異なるスピードを使用します。
+
+```hlsl
+// 順応スピードを決定
+float speed = (target_exposure > current_exposure) ? speed_to_light : speed_to_dark;
+
+// 露出値を更新（線形補間）
+float new_exposure = lerp(current_exposure, target_exposure, 1.0f - exp(-speed * delta_time));
+```
+
+### 3. 露出適用
+
+計算された露出値をHDR画像に適用します。
+
+```hlsl
+// 露出を適用
+float3 adapted_color = hdr_color.rgb * exposure;
+```
+
+---
+
+## 🔧 実装のポイント
+
+### 1. 1x1テクスチャによる露出値の保持
+
+露出値を1x1のテクスチャ（R32_FLOAT）に保持し、フレーム間で更新します。これにより、前フレームの露出値を参照してスムーズな遷移を実現できます。
+
+### 2. 異なる順応スピード
+
+明るい場所への順応（`speed_to_light`）と暗い場所への順応（`speed_to_dark`）で異なるスピードを使用します。実際の目の順応では、暗い場所から明るい場所への順応の方が速いため、これを再現します。
+
+### 3. 露出値のクランプ
+
+露出値を最小値（0.05）と最大値（10.0）でクランプすることで、極端な露出を防ぎます。
+
+---
+
+## 📝 注意点
+
+<Aside type="note">
+  Adaptationはポストプロセス前提設計であり、Fullscreen Quad を使用してフルスクリーン描画を行います。
+</Aside>
+
+<Aside type="note">
+  AdaptationはTone Mappingの前に適用することを想定しています。Adaptationで露出調整済みのHDRバッファをTone Mappingに入力します。
+</Aside>
+
+<Aside type="caution">
+  輝度計算は計算コストが高いため、Mipmapを使用して効率的に計算する必要があります。最上位のミップマップレベルを使用することで、1ピクセルのサンプリングでシーン全体の平均輝度を取得できます。
+</Aside>

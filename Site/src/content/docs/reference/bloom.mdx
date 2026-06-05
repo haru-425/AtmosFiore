@@ -1,0 +1,265 @@
+---
+title: "技術解説：Bloom（ブルーム）"
+description: 高輝度部分の抽出とガウシアンブラーによる発光表現。
+sidebar:
+  order: 6
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+室内空間における高輝度光源（窓からの直射光、ランプの光）の発光表現を実現するため、AtmosFioreでは **Bloom（ブルーム）** ポストエフェクトを採用しています。
+
+---
+
+## 📐 Bloomの基本概念
+
+Bloomは、シーン内の高輝度部分を抽出し、ガウシアンブラーを適用して元画像に合成することで、光が滲むような発光表現を実現するポストエフェクトです。
+
+### 処理フロー
+
+1. **輝度抽出（Threshold）**: シーンから輝度がしきい値以上のピクセルを抽出
+2. **ダウンサンプリング**: 抽出した輝度マップを複数の解像度にダウンサンプリング
+3. **ガウシアンブラー**: 各解像度の輝度マップに水平・垂直方向のガウシアンブラーを適用
+4. **アップサンプリング**: ブラー適用後のマップを元の解像度にアップサンプリングしながら合成
+5. **最終合成**: ブラー適用後の輝度マップを元画像に合成
+
+---
+
+## 💻 C++実装
+
+以下は、AtmosFioreのBloomクラスの実装です。
+
+```cpp
+/**
+ * @brief Bloom（ブルーム）ポストエフェクトクラス
+ *
+ * 高輝度部分を抽出し、ガウシアンブラーを複数段階で適用して
+ * 元画像に合成することで発光表現を実現する。
+ */
+class bloom
+{
+public:
+    /**
+     * @brief コンストラクタ
+     * @param device D3Dデバイス
+     * @param width バッファ幅
+     * @param height バッファ高さ
+     */
+    bloom(ID3D11Device* device, uint32_t width, uint32_t height);
+
+    /**
+     * @brief Bloom処理実行
+     * @param immediate_context デバイスコンテキスト
+     * @param color_map 入力カラーマップ（HDR想定）
+     */
+    void make(ID3D11DeviceContext* immediate_context, ID3D11ShaderResourceView* color_map);
+
+    /**
+     * @brief 最終Bloom結果のSRV取得
+     */
+    ID3D11ShaderResourceView* getColorMap() const
+    {
+        return bloom_final->GetColorMap();
+    }
+
+public:
+    /** @brief Bloom有効フラグ */
+    int is_bloom = 1;
+
+    /** @brief 輝度抽出しきい値 */
+    float bloom_extraction_threshold = 1.f;
+
+    /** @brief Bloom強度 */
+    float bloom_intensity = 0.673f;
+
+private:
+    ///< フルスクリーン描画用
+    std::unique_ptr<FullscreenQuad> bit_block_transfer;
+
+    ///< 輝度抽出用バッファ
+    std::unique_ptr<Framebuffer> glow_extraction;
+
+    /**
+     * @brief ダウンサンプル段数
+     *
+     * 多いほど品質向上だがコスト増加
+     */
+    static const size_t downsampled_count = 6;
+
+    /**
+     * @brief ガウシアンブラー用ピンポンバッファ
+     * [level][0:水平 or 1:垂直]
+     */
+    std::unique_ptr<Framebuffer> gaussian_blur[downsampled_count][2];
+
+    ///< 最終出力
+    std::unique_ptr<Framebuffer> bloom_final;
+
+    ///< 各種シェーダ
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> glow_extraction_ps;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> gaussian_blur_downsampling_ps;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> gaussian_blur_horizontal_ps;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> gaussian_blur_vertical_ps;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> gaussian_blur_upsampling_ps;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> bloom_final_ps;
+
+    ///< 定数バッファ
+    Microsoft::WRL::ComPtr<ID3D11Buffer> constant_buffer;
+};
+```
+
+---
+
+## 💻 HLSL実装
+
+以下は、AtmosFioreのBloom処理で使用されるHLSLシェーダーコードです。
+
+### 輝度抽出シェーダー
+
+```hlsl
+// 輝度抽出シェーダー
+float4 main(VS_OUT pin) : SV_TARGET
+{
+    float4 color = hdr_texture.Sample(sampler_states[POINT_CLAMP], pin.texcoord);
+    
+    // 輝度計算（輝度 = 0.2126*R + 0.7152*G + 0.0722*B）
+    float luminance = dot(color.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+    
+    // しきい値でクリッピング
+    if (luminance < bloom_extraction_threshold)
+    {
+        return float4(0.0f, 0.0f, 0.0f, 1.0f);
+    }
+    
+    // しきい値を超える部分のみを抽出
+    return color;
+}
+```
+
+### ガウシアンブラーシェーダー（水平）
+
+```hlsl
+// ガウシアンブラーシェーダー（水平）
+float4 main(VS_OUT pin) : SV_TARGET
+{
+    float4 color = 0.0f;
+    float total_weight = 0.0f;
+    
+    // ガウシアンカーネル（5タップ）
+    const float weights[5] = { 0.227027f, 0.1945946f, 0.1206f, 0.054f, 0.016f };
+    const float offsets[5] = { 0.0f, 1.0f, 2.0f, 3.0f, 4.0f };
+    
+    for (int i = 0; i < 5; i++)
+    {
+        float2 offset = float2(offsets[i] * texel_size.x, 0.0f);
+        color += hdr_texture.Sample(sampler_states[LINEAR_CLAMP], pin.texcoord + offset) * weights[i];
+        color += hdr_texture.Sample(sampler_states[LINEAR_CLAMP], pin.texcoord - offset) * weights[i];
+        total_weight += weights[i] * 2.0f;
+    }
+    
+    // 中心ピクセル
+    color += hdr_texture.Sample(sampler_states[LINEAR_CLAMP], pin.texcoord) * weights[0];
+    total_weight += weights[0];
+    
+    return color / total_weight;
+}
+```
+
+### ガウシアンブラーシェーダー（垂直）
+
+```hlsl
+// ガウシアンブラーシェーダー（垂直）
+float4 main(VS_OUT pin) : SV_TARGET
+{
+    float4 color = 0.0f;
+    float total_weight = 0.0f;
+    
+    // ガウシアンカーネル（5タップ）
+    const float weights[5] = { 0.227027f, 0.1945946f, 0.1206f, 0.054f, 0.016f };
+    const float offsets[5] = { 0.0f, 1.0f, 2.0f, 3.0f, 4.0f };
+    
+    for (int i = 0; i < 5; i++)
+    {
+        float2 offset = float2(0.0f, offsets[i] * texel_size.y);
+        color += hdr_texture.Sample(sampler_states[LINEAR_CLAMP], pin.texcoord + offset) * weights[i];
+        color += hdr_texture.Sample(sampler_states[LINEAR_CLAMP], pin.texcoord - offset) * weights[i];
+        total_weight += weights[i] * 2.0f;
+    }
+    
+    // 中心ピクセル
+    color += hdr_texture.Sample(sampler_states[LINEAR_CLAMP], pin.texcoord) * weights[0];
+    total_weight += weights[0];
+    
+    return color / total_weight;
+}
+```
+
+### 最終合成シェーダー
+
+```hlsl
+// Bloom最終合成シェーダー
+float4 main(VS_OUT pin) : SV_TARGET
+{
+    float4 original_color = original_texture.Sample(sampler_states[POINT_CLAMP], pin.texcoord);
+    float4 bloom_color = bloom_texture.Sample(sampler_states[LINEAR_CLAMP], pin.texcoord);
+    
+    // Bloom強度を適用して合成
+    float4 final_color = original_color + bloom_color * bloom_intensity;
+    
+    return final_color;
+}
+```
+
+---
+
+## 🎨 ピンポンバッファ構造
+
+Bloom処理では、ピンポンバッファ構造を使用してガウシアンブラーを効率化しています。
+
+```cpp
+// ガウシアンブラー用ピンポンバッファ
+// [level][0:水平 or 1:垂直]
+std::unique_ptr<Framebuffer> gaussian_blur[downsampled_count][2];
+```
+
+各ダウンサンプリングレベルで、水平ブラーと垂直ブラーを交互に適用することで、効率的にガウシアンブラーを実現します。
+
+### ダウンサンプリング段数
+
+```cpp
+static const size_t downsampled_count = 6;
+```
+
+6段階のダウンサンプリングを行うことで、広範囲のぼかし効果を実現しつつ、パフォーマンスを維持しています。段数が多いほど品質が向上しますが、計算コストも増加します。
+
+---
+
+## 🔧 実装のポイント
+
+### 1. 輝度抽出しきい値
+
+輝度抽出しきい値（`bloom_extraction_threshold`）を調整することで、Bloomを適用する輝度レベルを制御できます。しきい値を低くするとより多くのピクセルが発光し、高くすると高輝度部分のみが発光します。
+
+### 2. Bloom強度
+
+Bloom強度（`bloom_intensity`）を調整することで、発光の強さを制御できます。強度を高くすると発光が強くなりますが、不自然になりやすくなります。
+
+### 3. ピンポンバッファによる効率化
+
+ピンポンバッファ構造を使用することで、水平ブラーと垂直ブラーを交互に適用し、メモリ使用量を最小限に抑えながら高品質なガウシアンブラーを実現しています。
+
+---
+
+## 📝 注意点
+
+<Aside type="caution">
+  入力SRV(color_map)はこの処理中にRTVとしてバインドしてはいけません。同一リソースの SRV/RTV 同時使用は未定義動作（DX11制約）となります。
+</Aside>
+
+<Aside type="note">
+  解像度が極端に小さいと downsample で破綻する可能性があります。適切な解像度（例：1920x1080）を使用してください。
+</Aside>
+
+<Aside type="note">
+  Bloomはポストプロセス前提設計であり、Fullscreen Quad を使用してフルスクリーン描画を行います。
+</Aside>

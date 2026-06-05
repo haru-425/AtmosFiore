@@ -1,0 +1,334 @@
+---
+title: "技術解説：Area Light（エリアライト）"
+description: LTC（Linearly Transformed Cosines）によるエリアライティングの実装。
+sidebar:
+  order: 11
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+面光源（窓、パネルライトなど）からの光をリアルタイムにシミュレートするため、AtmosFioreでは **Area Light（エリアライト）** を採用しています。
+
+---
+
+## 📐 Area Lightの基本概念
+
+Area Lightは、点光源のように一点から光が放射されるのではなく、面から光が放射される光源をシミュレートする技術です。これにより、窓からの自然光やパネルライトのような面光源をリアルに表現できます。
+
+### LTC（Linearly Transformed Cosines）
+
+AtmosFioreでは、エリアライティングのために **LTC（Linearly Transformed Cosines）** アルゴリズムを採用しています。LTCは、コサインロブ（cosine lobe）を線形変換することで、任意のBRDF（双方向反射率分布関数）を近似する手法です。
+
+---
+
+## 💻 C++実装
+
+以下は、AtmosFioreのエリアライト管理クラスの実装です。
+
+```cpp
+/**
+ * @brief エリアライト管理クラス
+ *
+ * シーン内のエリアライトを管理し、
+ * GPUへの転送およびデバッグ描画を行う。
+ */
+class AreaLightManager
+{
+public:
+    /**
+     * @brief 初期化
+     *
+     * @param device D3D11デバイス
+     *
+     * @note
+     * StructuredBufferやデバッグ用メッシュを生成する
+     */
+    void initialize(ID3D11Device* device);
+
+    /**
+     * @brief ライト追加
+     *
+     * @param light 追加するライト
+     */
+    void add_light(const AreaLight& light);
+
+    /**
+     * @brief ライト追加（簡易版）
+     *
+     * @param position 位置
+     * @param direction 方向（法線）
+     * @param right 右方向ベクトル
+     * @param width 幅
+     * @param height 高さ
+     * @param intensity 強度
+     */
+    void add_light(dx::XMFLOAT3 position = { 0, 0, 0 },
+        dx::XMFLOAT3 direction = { 0, -1, 0 },
+        dx::XMFLOAT3 right = { 1, 0, 0 },
+        float width = 2.0f,
+        float height = 2.0f,
+        float intensity = 1.0f,
+        dx::XMFLOAT4 diffuseColor = { 1.0f, 1.0f, 1.0f, 1.0f });
+
+    /**
+     * @brief ライト全削除
+     */
+    void clear_light()
+    {
+        _lights.clear();
+    }
+
+    /**
+     * @brief ライト削除（インデックス指定）
+     *
+     * @param index 削除するライトのインデックス
+     */
+    void remove_light(int index);
+
+    /**
+     * @brief ライト配列取得
+     *
+     * @return std::vector<AreaLight>&
+     *
+     * @warning
+     * 外部から直接変更されるため注意
+     */
+    std::vector<AreaLight>& get_lights();
+
+    /**
+     * @brief 更新処理
+     *
+     * ライトのアニメーションや内部状態更新を行う
+     */
+    void update();
+
+    /**
+     * @brief ImGui描画
+     *
+     * ライトの編集UIを表示する
+     */
+    void draw_imgui();
+
+    /**
+     * @brief GPUへライト情報転送
+     *
+     * @param ctx デバイスコンテキスト
+     *
+     * @pre
+     * シェーダー側で同一レイアウトのStructuredBufferが定義されていること
+     */
+    void upload_to_gpu(ID3D11DeviceContext* ctx);
+
+    /**
+     * @brief デバッグ描画
+     *
+     * ライト位置と方向を矩形で可視化する
+     *
+     * @note
+     * デバッグ用途のみ使用
+     */
+    void debug_render();
+
+private:
+    /// ライト配列
+    std::vector<AreaLight> _lights;
+
+    /// 描画されている（可視）ライト数
+    int _visible_count = 0;
+
+    /// ライト用StructuredBuffer
+    Microsoft::WRL::ComPtr<ID3D11Buffer> _sbLights;
+    /// ライト用ShaderResourceView
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> _sbLightsSRV;
+    /// ライト数用定数バッファ
+    Microsoft::WRL::ComPtr<ID3D11Buffer> _cbLightCount;
+
+    /**
+     * @brief StructuredBuffer生成
+     */
+    void create_structured_buffer(ID3D11Device* device);
+
+    /**
+     * @brief ライト数用定数バッファ生成
+     */
+    void create_light_count_buffer(ID3D11Device* device);
+
+    /// デバッグ描画用矩形
+    Debug_Cube* _debug_box;
+};
+```
+
+---
+
+## 💻 HLSL実装
+
+以下は、AtmosFioreのエリアライティングで使用されるHLSLシェーダーコードです。
+
+### LTCによる拡散反射
+
+```hlsl
+// LTCによる拡散反射
+float3 LTC_Diffuse(float3 N, float3 V, float3 position, AreaLight light, float3 c_diff, float3 f0, float3 f90)
+{
+    // LTCマトリックスを取得（拡散用）
+    float3x3 M = GetLTCMatrix_Diffuse(roughness);
+    
+    // 視線方向をLTC空間に変換
+    float3 L = mul(M, V);
+    
+    // エリアライトの4頂点を計算
+    float3 corners[4];
+    corners[0] = light.position + light.right * (light.width * 0.5f) + light.up * (light.height * 0.5f);
+    corners[1] = light.position - light.right * (light.width * 0.5f) + light.up * (light.height * 0.5f);
+    corners[2] = light.position - light.right * (light.width * 0.5f) - light.up * (light.height * 0.5f);
+    corners[3] = light.position + light.right * (light.width * 0.5f) - light.up * (light.height * 0.5f);
+    
+    // 積分（簡易版：4点サンプリング）
+    float3 irradiance = 0.0f;
+    for (int i = 0; i < 4; i++)
+    {
+        float3 light_dir = normalize(corners[i] - position);
+        float NoL = max(dot(N, light_dir), 0.0f);
+        irradiance += light.color * light.intensity * NoL;
+    }
+    irradiance *= 0.25f; // 平均
+    
+    // ランベリアンBRDF
+    return irradiance * c_diff;
+}
+```
+
+### LTCによる鏡面反射
+
+```hlsl
+// LTCによる鏡面反射
+float3 LTC_Specular(float3 N, float3 V, float3 position, AreaLight light, float roughness, float3 f0, float3 f90)
+{
+    // LTCマトリックスを取得（鏡面用）
+    float3x3 M = GetLTCMatrix_Specular(roughness);
+    
+    // 視線方向をLTC空間に変換
+    float3 L = mul(M, V);
+    
+    // エリアライトの4頂点を計算
+    float3 corners[4];
+    corners[0] = light.position + light.right * (light.width * 0.5f) + light.up * (light.height * 0.5f);
+    corners[1] = light.position - light.right * (light.width * 0.5f) + light.up * (light.height * 0.5f);
+    corners[2] = light.position - light.right * (light.width * 0.5f) - light.up * (light.height * 0.5f);
+    corners[3] = light.position + light.right * (light.width * 0.5f) - light.up * (light.height * 0.5f);
+    
+    // 積分（簡易版：4点サンプリング）
+    float3 specular = 0.0f;
+    for (int i = 0; i < 4; i++)
+    {
+        float3 light_dir = normalize(corners[i] - position);
+        float3 H = normalize(V + light_dir);
+        float NoL = max(dot(N, light_dir), 0.0f);
+        float NoH = max(dot(N, H), 0.0f);
+        float HoV = max(dot(H, V), 0.0f);
+        
+        // GGX BRDF
+        specular += light.color * light.intensity * NoL * brdf_specular_ggx(f0, f90, roughness * roughness, HoV, NoL, max(dot(N, V), 0.0f), NoH);
+    }
+    specular *= 0.25f; // 平均
+    
+    return specular;
+}
+```
+
+### ディファードライティングでのエリアライト適用
+
+```hlsl
+// deferred_lighting_ps.hlsl
+// エリアライト (LTC - Linearly Transformed Cosines)
+for (int i = 0; i < numAreaLights; ++i)
+{
+    if (areaLights[i].intensity <= 0.0f)
+        continue;
+    
+    // LTCによる拡散反射（BRDF考慮）
+    float3 ltcDiffuse = LTC_Diffuse(N, V, position, areaLights[i], c_diff, f0, f90);
+    
+    // LTCによる鏡面反射（BRDF考慮）
+    float3 ltcSpecular = LTC_Specular(N, V, position, areaLights[i], roughness, f0, f90);
+    
+    // 法線とライト方向の内積でクリッピング
+    float3 lightDir = normalize(areaLights[i].direction);
+    float NoL = saturate(dot(N, lightDir));
+    
+    diffuse += ltcDiffuse * NoL;
+    specular += ltcSpecular * NoL;
+}
+```
+
+---
+
+## 🎨 LTCマトリックスの事前計算
+
+LTCマトリックスは、粗さと視線方向に応じて事前計算されます。これにより、リアルタイムで高品質なエリアライティングを実現できます。
+
+```hlsl
+// LTCマトリックスの取得（拡散用）
+float3x3 GetLTCMatrix_Diffuse(float roughness)
+{
+    // 粗さに応じたLTCマトリックスをLUTからサンプリング
+    float2 uv = float2(roughness, 0.0f);
+    float4 ltc = ltc_lut.Sample(sampler_states[LINEAR_CLAMP], uv);
+    
+    // マトリックスを構築
+    float3x3 M;
+    M[0] = float3(ltc.x, 0.0f, 0.0f);
+    M[1] = float3(0.0f, ltc.y, 0.0f);
+    M[2] = float3(0.0f, 0.0f, 1.0f);
+    
+    return M;
+}
+
+// LTCマトリックスの取得（鏡面用）
+float3x3 GetLTCMatrix_Specular(float roughness)
+{
+    // 粗さと視線方向に応じたLTCマトリックスをLUTからサンプリング
+    float2 uv = float2(roughness, NoV);
+    float4 ltc = ltc_lut.Sample(sampler_states[LINEAR_CLAMP], uv);
+    
+    // マトリックスを構築
+    float3x3 M;
+    M[0] = float3(ltc.x, ltc.z, 0.0f);
+    M[1] = float3(ltc.z, ltc.y, 0.0f);
+    M[2] = float3(0.0f, 0.0f, 1.0f);
+    
+    return M;
+}
+```
+
+---
+
+## 🔧 実装のポイント
+
+### 1. StructuredBufferによるGPU転送
+
+エリアライト情報はStructuredBufferを用いてシェーダーへ転送されます。これにより、多数のエリアライトを効率的に処理できます。
+
+### 2. LTCによるBRDF近似
+
+LTCは、コサインロブを線形変換することで、任意のBRDFを近似します。これにより、エリアライトからの光を物理的に正確にシミュレートできます。
+
+### 3. 4点サンプリングによる簡易積分
+
+エリアライトの積分を4点サンプリングで近似することで、リアルタイムで高品質なエリアライティングを実現しています。より高品質な結果が必要な場合は、サンプリング数を増やすことができます。
+
+---
+
+## 📝 注意点
+
+<Aside type="note">
+  エリアライトは、点光源よりも計算コストが高いため、使用するライト数に注意が必要です。多数のエリアライトを使用する場合、計算コストが増加します。
+</Aside>
+
+<Aside type="note">
+  LTCマトリックスは事前計算されたLUT（Look-Up Table）からサンプリングされます。LUTは、粗さと視線方向に応じてマトリックスを格納しています。
+</Aside>
+
+<Aside type="caution">
+  エリアライトの積分は簡易版（4点サンプリング）を使用しています。より高品質な結果が必要な場合は、サンプリング数を増やす必要がありますが、計算コストが増加します。
+</Aside>

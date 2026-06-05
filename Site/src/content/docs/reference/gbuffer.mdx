@@ -1,0 +1,267 @@
+---
+title: "技術解説：G-Buffer（ジオメトリバッファ）"
+description: ディファードライティングで使用する幾何情報を格納するバッファ構造。
+sidebar:
+  order: 10
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+ディファードライティングで使用する幾何情報を格納するため、AtmosFioreでは **G-Buffer（Geometry Buffer）** を採用しています。
+
+---
+
+## 📐 G-Bufferの基本概念
+
+G-Bufferは、シーンの幾何情報（法線、アルベド、金属度、粗さ、位置、AO、エミッシブ）を複数のレンダーターゲットに格納するバッファです。ディファードライティングパイプラインでは、ジオメトリパスでG-Bufferを生成し、ライティングパスでG-Bufferを参照してライティング計算を行います。
+
+---
+
+## 💻 G-Bufferレイアウト
+
+以下は、AtmosFioreのG-Bufferレイアウトです。
+
+```hlsl
+/*
+    G-Buffer Layout (Deferred Rendering, PBR-Compatible)
+
+    This configuration uses 4 Render Targets + Depth Buffer.
+    Designed for high-quality physically based rendering (PBR) pipelines.
+
+    GBuffer0 : R16G16B16A16_FLOAT
+        xyz = World-space normal vector
+        w   = Surface roughness (0?1)
+
+    GBuffer1 : R8G8B8A8_UNORM
+        rgb = Base color (albedo, sRGB)
+        a   = Metalness (0 for dielectric, 1 for metal)
+
+    GBuffer2 : R16G16B16A16_FLOAT
+        xyz = World-space position (high precision)
+        w   = Ambient occlusion (AO)
+
+    GBuffer3 : R16G16B16A16_FLOAT
+        rgb = Emissive color
+        w   = Subsurface / Clearcoat / Specular intensity (material-dependent)
+
+    Depth Buffer : D32_FLOAT
+        Stores per-pixel depth value used for position reconstruction,
+        shadow mapping, and post-processing effects.
+
+    Notes:
+    - Memory cost at 1920x1080 ? 64 MB per frame.
+    - For optimization, position may be reconstructed from depth instead of
+        being stored directly in GBuffer2.
+    - Optional extensions:
+        * Velocity buffer (for motion blur / TAA)
+        * Material ID buffer (for special effects)
+
+    Example usage in lighting pass:
+        float3 normal    = normalize(gbuffer0.xyz);
+        float  roughness = gbuffer0.w;
+        float3 albedo    = SRGBToLinear(gbuffer1.rgb);
+        float  metalness = gbuffer1.a;
+        float3 position  = gbuffer2.xyz;
+        float  ao        = gbuffer2.w;
+        float3 emissive  = gbuffer3.rgb;
+*/
+struct PS_OUT_GBUFFER
+{
+    float4 gbuffer0 : SV_TARGET0; // Normal + Roughness
+    float4 gbuffer1 : SV_TARGET1; // Albedo + Metalness
+    float4 gbuffer2 : SV_TARGET2; // World Position + AO
+    float4 gbuffer3 : SV_TARGET3; // Emissive + Subsurface/Clearcoat
+};
+```
+
+---
+
+## 💻 HLSL実装
+
+以下は、AtmosFioreのG-Buffer生成シェーダーの実装です。
+
+### G-Buffer生成シェーダー
+
+```hlsl
+// gltf_deferred_geometry_ps.hlsl
+PS_OUT_GBUFFER main(VS_OUT pin, bool is_front_face : SV_IsFrontFace)
+{
+    PS_OUT_GBUFFER pout;
+    
+    const material_constants m = materials[material];
+    
+    // アルベドのサンプリング
+    float4 basecolor_factor = m.pbr_metallic_roughness.basecolor_factor;
+    const int basecolor_texture = m.pbr_metallic_roughness.basecolor_texture.index;
+    if (basecolor_texture > -1)
+    {
+        float4 sampled = material_textures[BASECOLOR_TEXTURE].Sample(sampler_states[ANISOTROPIC_WRAP], pin.texcoord);
+        sampled.rgb = pow(sampled.rgb, GAMMA);
+        basecolor_factor *= sampled;
+    }
+    
+    // エミッシブのサンプリング
+    float3 emissive_factor = m.emissive_factor;
+    const int emissive_texture = m.emissive_texture.index;
+    if (emissive_texture > -1)
+    {
+        float4 sampled = material_textures[EMISSIVE_TEXTURE].Sample(sampler_states[ANISOTROPIC_WRAP], pin.texcoord);
+        sampled.rgb = pow(sampled.rgb, GAMMA);
+        emissive_factor *= sampled.rgb;
+    }
+    
+    // 粗さと金属度のサンプリング
+    float roughness_factor = m.pbr_metallic_roughness.roughness_factor;
+    float metallic_factor = m.pbr_metallic_roughness.metallic_factor;
+    const int metallic_roughness_texture = m.pbr_metallic_roughness.metallic_roughness_texture.index;
+    if (metallic_roughness_texture > -1)
+    {
+        float4 sampled = material_textures[METALLIC_ROUGHNESS_TEXTURE].Sample(sampler_states[LINEAR_WRAP], pin.texcoord);
+        roughness_factor *= sampled.g;
+        metallic_factor *= sampled.b;
+    }
+    
+    // AOのサンプリング
+    float occlusion_factor = 1.0;
+    const int occlusion_texture = m.occlusion_texture.index;
+    if (occlusion_texture > -1)
+    {
+        float4 sampled = material_textures[OCCLUSION_TEXTURE].Sample(sampler_states[LINEAR_WRAP], pin.texcoord);
+        occlusion_factor *= sampled.r;
+    }
+    
+    // 法線の計算
+    float3 N = normalize(pin.w_normal.xyz);
+    float3 T = has_tangent ? normalize(pin.w_tangent.xyz) : float3(1, 0, 0.0001);
+    float sigma = has_tangent ? pin.w_tangent.w : 1.0;
+    T = normalize(T - N * dot(N, T));
+    float3 B = normalize(cross(N, T) * sigma);
+    
+    // 裏面の場合、接線基底を反転
+    if (is_front_face == false)
+    {
+        T = -T;
+        B = -B;
+        N = -N;
+    }
+    
+    // 法線マップの適用
+    const int normal_texture = m.normal_texture.index;
+    if (normal_texture > -1)
+    {
+        float4 sampled = material_textures[NORMAL_TEXTURE].Sample(sampler_states[LINEAR_WRAP], pin.texcoord);
+        float3 normal_factor = sampled.xyz;
+        normal_factor = (normal_factor * 2.0) - 1.0;
+        normal_factor = normalize(normal_factor * float3(m.normal_texture.scale, m.normal_texture.scale, 1.0));
+        N = normalize((normal_factor.x * T) + (normal_factor.y * B) + (normal_factor.z * N));
+    }
+    
+    // G-Bufferへの書き込み
+    pout.gbuffer0.xyz = N;
+    pout.gbuffer0.w = roughness_factor;
+    
+    pout.gbuffer1.rgb = basecolor_factor.rgb;
+    pout.gbuffer1.w = metallic_factor;
+    
+    pout.gbuffer2.xyz = pin.w_position.xyz;
+    pout.gbuffer2.w = occlusion_factor;
+    
+    pout.gbuffer3.rgb = emissive_factor;
+    pout.gbuffer3.w = 0;
+    
+    return pout;
+}
+```
+
+---
+
+## 🎨 G-Bufferの使用例
+
+以下は、ライティングパスでのG-Bufferの使用例です。
+
+```hlsl
+// deferred_lighting_ps.hlsl
+float4 main(VS_OUT pin) : SV_TARGET
+{
+    // G-Bufferから情報を取得
+    float4 sampled = gbuffer0.SampleLevel(sampler_states[POINT_CLAMP], pin.texcoord, 0);
+    float3 normal = normalize(sampled.xyz);
+    float roughness = sampled.w;
+    
+    sampled = gbuffer1.SampleLevel(sampler_states[POINT_CLAMP], pin.texcoord, 0);
+    float3 basecolor = sampled.xyz;
+    float metallic = sampled.w;
+    
+    sampled = gbuffer2.SampleLevel(sampler_states[POINT_CLAMP], pin.texcoord, 0);
+    float3 position = sampled.xyz;
+    float occlusion = sampled.w;
+    
+    sampled = gbuffer3.SampleLevel(sampler_states[POINT_CLAMP], pin.texcoord, 0);
+    float3 emissive = sampled.xyz;
+    
+    // PBRパラメータの計算
+    const float3 f0 = lerp(0.04f, basecolor, metallic);
+    const float3 f90 = 1.0f;
+    const float alpha_roughness = roughness * roughness;
+    const float3 c_diff = lerp(basecolor, 0.0f, metallic);
+    
+    const float3 N = normal;
+    const float3 V = normalize(camera_position.xyz - position);
+    const float NoV = max(0.0f, dot(N, V));
+    
+    // ライティング計算...
+}
+```
+
+---
+
+## 🔧 G-Bufferの最適化
+
+### メモリ消費
+
+1920x1080解像度で、4つのレンダーターゲットを使用する場合、1フレームあたり約64MBのメモリを消費します。
+
+```
+GBuffer0 (R16G16B16A16_FLOAT): 1920 * 1080 * 8 bytes = 16.6 MB
+GBuffer1 (R8G8B8A8_UNORM): 1920 * 1080 * 4 bytes = 8.3 MB
+GBuffer2 (R16G16B16A16_FLOAT): 1920 * 1080 * 8 bytes = 16.6 MB
+GBuffer3 (R16G16B16A16_FLOAT): 1920 * 1080 * 8 bytes = 16.6 MB
+Depth Buffer (D32_FLOAT): 1920 * 1080 * 4 bytes = 8.3 MB
+Total: 66.4 MB
+```
+
+### 位置情報の再構築
+
+メモリ消費を削減するため、位置情報を深度バッファから再構築する手法があります。これにより、GBuffer2を削減できますが、計算コストが増加します。
+
+```hlsl
+// 深度から位置を再構築
+float3 ReconstructPosition(float2 uv, float depth)
+{
+    float4 ndc;
+    ndc.xy = uv_to_ndc(uv);
+    ndc.z = depth;
+    ndc.w = 1.0f;
+    
+    float4 position = mul(ndc, inverse_projection);
+    position /= position.w;
+    
+    return position.xyz;
+}
+```
+
+---
+
+## 📝 注意点
+
+<Aside type="caution">
+  G-Bufferはメモリ消費が大きいため、解像度が高い場合には注意が必要です。位置情報を深度から再構築することでメモリ消費を削減できますが、計算コストが増加します。
+</Aside>
+
+<Aside type="note">
+  G-Bufferはジオメトリパスで生成され、ライティングパスで参照されます。この2つのパスを分離することで、複数の光源を効率的に処理できます。
+</Aside>
+
+<Aside type="note">
+  G-Bufferのフォーマットは、PBR（物理ベースレンダリング）と互換性を持つように設計されています。法線、アルベド、金属度、粗さを格納することで、物理的に正確なライティング計算を行うことができます。
+</Aside>

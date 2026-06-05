@@ -1,0 +1,296 @@
+---
+title: "技術解説：Audio Engine（オーディオエンジン）"
+description: ゲーム内のオーディオ再生を管理するオーディオエンジンのアーキテクチャ。
+sidebar:
+  order: 15
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+ゲーム内のオーディオ再生を管理するため、AtmosFioreでは **Audio Engine（オーディオエンジン）** を実装しています。
+
+---
+
+## 📐 Audio Engineの基本概念
+
+Audio Engineは、ゲーム内の効果音（SE）や背景音楽（BGM）の再生を管理するシステムです。AtmosFioreのAudio Engineは、以下のコンポーネントで構成されています。
+
+### コンポーネント
+
+1. **AudioCommand**: オーディオ再生コマンドを管理
+2. **VoicePool**: ボイス（オーディオ再生インスタンス）のプール管理
+3. **AudioGraph**: オーディオグラフ（DSPノード接続）の管理
+4. **StreamRingBuffer**: ストリーミング再生用リングバッファ
+5. **Spatializer**: 3D空間オーディオの定位
+
+---
+
+## 💻 C++実装
+
+以下は、AtmosFioreのAudio Engineクラスの実装です。
+
+```cpp
+/**
+ * @brief オーディオエンジンクラス
+ *
+ * ゲーム内のオーディオ再生を管理する。
+ * 効果音（SE）と背景音楽（BGM）の再生をサポート。
+ *
+ * @remark
+ * - XAudio2を使用したオーディオ再生
+ * - VoicePoolによるボイスの効率的な管理
+ * - AudioGraphによるDSPノード接続
+ * - ストリーミング再生対応
+ * - 3D空間オーディオ対応
+ */
+class AudioEngine
+{
+public:
+    /**
+     * @brief コンストラクタ
+     */
+    AudioEngine();
+
+    /**
+     * @brief デストラクタ
+     */
+    ~AudioEngine();
+
+    /**
+     * @brief 初期化
+     *
+     * @param device_name オーディオデバイス名（nullptrでデフォルト）
+     * @return 成功/失敗
+     */
+    bool Initialize(const wchar_t* device_name = nullptr);
+
+    /**
+     * @brief 終了処理
+     */
+    void Terminate();
+
+    /**
+     * @brief 更新処理
+     *
+     * オーディオグラフの更新、ストリーミングバッファの更新などを行う。
+     */
+    void Update();
+
+    /**
+     * @brief 効果音（SE）を再生
+     *
+     * @param file_name オーディオファイル名
+     * @param volume 音量（0.0f - 1.0f）
+     * @param pitch ピッチ（1.0fが基準）
+     * @param pan パン（-1.0f - 1.0f）
+     * @return ボイスID（失敗時は-1）
+     */
+    int PlaySE(const char* file_name, float volume = 1.0f, float pitch = 1.0f, float pan = 0.0f);
+
+    /**
+     * @brief 背景音楽（BGM）を再生
+     *
+     * @param file_name オーディオファイル名
+     * @param volume 音量（0.0f - 1.0f）
+     * @param loop ループ再生フラグ
+     * @return ボイスID（失敗時は-1）
+     */
+    int PlayBGM(const char* file_name, float volume = 1.0f, bool loop = true);
+
+    /**
+     * @brief ボイスを停止
+     *
+     * @param voice_id ボイスID
+     */
+    void StopVoice(int voice_id);
+
+    /**
+     * @brief すべてのボイスを停止
+     */
+    void StopAllVoices();
+
+private:
+    /// XAudio2エンジン
+    Microsoft::WRL::ComPtr<IXAudio2> m_xaudio2;
+
+    /// マスターボイス
+    Microsoft::WRL::ComPtr<IXAudio2MasteringVoice> m_mastering_voice;
+
+    /// ボイスプール
+    std::unique_ptr<VoicePool> m_voice_pool;
+
+    /// オーディオグラフ
+    std::unique_ptr<AudioGraph> m_audio_graph;
+
+    /// ストリーミングバッファ
+    std::unique_ptr<StreamRingBuffer> m_stream_buffer;
+
+    /// スペシャライザー
+    std::unique_ptr<Spatializer> m_spatializer;
+
+    /// オーディオコマンドキュー
+    std::queue<AudioCommand> m_command_queue;
+};
+```
+
+---
+
+## 💻 AudioGraph実装
+
+以下は、AtmosFioreのAudioGraphクラスの実装です。
+
+```cpp
+/**
+ * @brief オーディオグラフクラス
+ *
+ * DSPノードを接続してオーディオ信号処理グラフを構築する。
+ * ノードの接続、切断、トポロジカルソート、サイクル検出などの機能を持つ。
+ */
+class AudioGraph
+{
+public:
+    /**
+     * @brief ノードを追加
+     *
+     * @param node 追加するノード
+     * @return ノードID（失敗時は-1）
+     */
+    int AddNode(std::shared_ptr<IAudioDSPNode> node);
+
+    /**
+     * @brief ノードを削除
+     *
+     * @param node_id ノードID
+     */
+    void RemoveNode(int node_id);
+
+    /**
+     * @brief ノードを接続
+     *
+     * @param from_node_id 接続元ノードID
+     * @param to_node_id 接続先ノードID
+     * @return 成功/失敗
+     */
+    bool ConnectNodes(int from_node_id, int to_node_id);
+
+    /**
+     * @brief ノードを切断
+     *
+     * @param from_node_id 切断元ノードID
+     * @param to_node_id 切断先ノードID
+     */
+    void DisconnectNodes(int from_node_id, int to_node_id);
+
+    /**
+     * @brief オーディオグラフを更新
+     *
+     * トポロジカルソートを行い、ノードを順次処理する。
+     */
+    void Update();
+
+    /**
+     * @brief サイクル検出
+     *
+     * @return サイクルがある場合はtrue
+     */
+    bool HasCycle() const;
+
+private:
+    /// ノードリスト
+    std::vector<std::shared_ptr<IAudioDSPNode>> m_nodes;
+
+    /// 接続リスト
+    std::vector<std::pair<int, int>> m_connections;
+
+    /// トポロジカルソート結果
+    std::vector<int> m_sorted_nodes;
+};
+```
+
+---
+
+## 🎨 DSPノード
+
+以下は、AtmosFioreで実装されているDSPノードの例です。
+
+### LowPassフィルター
+
+```cpp
+/**
+ * @brief ローパスフィルターDSPノード
+ *
+ * 高周波成分をカットするローパスフィルターを実装する。
+ */
+class LowPass : public IAudioDSPNode
+{
+public:
+    /**
+     * @brief コンストラクタ
+     *
+     * @param cutoff_frequency カットオフ周波数（Hz）
+     */
+    LowPass(float cutoff_frequency);
+
+    /**
+     * @brief 処理実行
+     *
+     * @param input 入力オーディオバッファ
+     * @param output 出力オーディオバッファ
+     * @param frame_count フレーム数
+     */
+    void Process(const float* input, float* output, size_t frame_count) override;
+
+    /**
+     * @brief カットオフ周波数を設定
+     *
+     * @param cutoff_frequency カットオフ周波数（Hz）
+     */
+    void SetCutoffFrequency(float cutoff_frequency);
+
+private:
+    /// カットオフ周波数
+    float m_cutoff_frequency;
+
+    /// フィルター係数
+    float m_a0, m_a1, m_b1;
+
+    /// 前回の入力・出力
+    float m_prev_input, m_prev_output;
+};
+```
+
+---
+
+## 🔧 実装のポイント
+
+### 1. VoicePoolによるボイス管理
+
+VoicePoolは、オーディオ再生インスタンス（ボイス）を効率的に管理するプールです。ボイスの再利用により、メモリ割り当てのオーバーヘッドを削減します。
+
+### 2. AudioGraphによるDSPノード接続
+
+AudioGraphは、DSPノードを接続してオーディオ信号処理グラフを構築します。ノードの接続、切断、トポロジカルソート、サイクル検出などの機能を持ちます。
+
+### 3. ストリーミング再生
+
+StreamRingBufferは、大容量のオーディオファイルをストリーミング再生するためのリングバッファです。これにより、BGMのような長いオーディオファイルを効率的に再生できます。
+
+### 4. 3D空間オーディオ
+
+Spatializerは、3D空間でのオーディオ定位を計算します。これにより、音源の位置に応じて左右のバランスを調整し、臨場感のあるオーディオを実現します。
+
+---
+
+## 📝 注意点
+
+<Aside type="note">
+  Audio Engineは、AtmosFioreの主題（室内の光と空気感）とは直接関係ない技術ですが、ゲームエンジンとしての完全性を保つために実装されています。
+</Aside>
+
+<Aside type="note">
+  Audio Engineは、XAudio2を使用しています。XAudio2は、Windowsプラットフォームで利用可能なオーディオAPIです。
+</Aside>
+
+<Aside type="caution">
+  VoicePoolのサイズは、同時再生可能なボイス数を制限します。ボイス数が不足すると、新しいオーディオの再生が失敗する可能性があります。
+</Aside>

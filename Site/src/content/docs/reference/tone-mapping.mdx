@@ -1,0 +1,336 @@
+---
+title: "技術解説：Tone Mapping（トーンマッピング）"
+description: HDRレンダリングされた高輝度カラーをSDRディスプレイに適切に表示するためのトーンマッピング。
+sidebar:
+  order: 7
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+HDRレンダリングされた高輝度カラー情報を適切にSDRディスプレイに表示するため、AtmosFioreでは **Tone Mapping（トーンマッピング）** を採用しています。
+
+---
+
+## 📐 Tone Mappingの基本概念
+
+Tone Mappingは、HDR（High Dynamic Range）レンダリングされた高輝度カラーを、SDR（Standard Dynamic Range）ディスプレイの表示範囲にマッピングする技術です。これにより、高輝度光源（太陽、窓からの直射光）の白飛びを防ぎ、自然な見た目を維持しながら広いダイナミックレンジを表現できます。
+
+### 処理フロー
+
+1. **HDRレンダリング**: シーンをHDRフォーマットでレンダリング
+2. **露出調整（Adaptation）**: 自動露出によりシーンの輝度に応じて露出を調整
+3. **トーンマッピング**: HDRカラーをSDR範囲にマッピング
+4. **ガンマ補正**: ディスプレイのガンマ特性を補正
+
+---
+
+## 💻 C++実装
+
+以下は、AtmosFioreのTone Mappingクラスの実装です。
+
+```cpp
+/**
+ * @brief トーンマッピングクラス
+ *
+ * HDRレンダリングされた高輝度カラーをSDRディスプレイに適切に表示するための
+ * トーンマッピング処理を行う。
+ */
+class ToneMapping
+{
+public:
+    // シェーダー定数バッファ構造体（HLSL と同期）
+    struct ToneMappingConfig {
+        int mapping_type = 0;
+        float exposure = 1.0f;
+        float gamma = 2.2f;
+        float m_param = 0.22f;
+
+        float max_white = 10.0f;
+        float shoulder = 0.22f;
+        float linear_strength = 0.30f;
+        float linear_angle = 0.10f;
+
+        float toe_strength = 0.20f;
+        int is_enabled = 1;
+        float padding[2]{};
+    };
+
+    enum class ToneMappingType {
+        ACES = 0, Reinhard,
+        Unreal, Neutral,
+        Linear, Hable,
+        AgX, GT,
+        Drago, Exponential,
+        Logarithmic, Ward,
+        Lottes, Hejl,
+        RomBinDaHouse, ReinhardExtended,
+        FilmicSimple, ACESApprox,
+        PBRNeutral, Sigmoid,
+        Piecewise, Cineon,
+        Exposure, GammaOnly,
+        PQApprox, HLGApprox,
+        OpenDRTLike, CameraResponse,
+        Uchimura, ClampOnly,
+        WhitePreservingLuma, FilmicALU,
+        AgXPunchy, CustomCurve
+    };
+
+    ToneMapping(ID3D11Device* device, uint32_t width, uint32_t height);
+
+    // 露出調整済みのHDRカラーをトーンマッピング・ガンマ補正する
+    void make(ID3D11DeviceContext* immediate_context, ID3D11ShaderResourceView* adjusted_hdr_srv);
+
+    // 最終的なSDR描画結果を取得 (Format: R8G8B8A8_UNORM)
+    ID3D11ShaderResourceView* get_color_map() const { return tone_mapping_target->GetColorMap(); }
+
+    // 調整パラメータ
+    ToneMappingType mapping_type = ToneMappingType::ACES;
+    float exposure = 1.0f;
+    float gamma = 2.2f;
+    float gt_param = 0.22f;
+    float max_white = 10.0f;
+    float shoulder = 0.22f;
+    float linear_strength = 0.30f;
+    float linear_angle = 0.10f;
+    float toe_strength = 0.20f;
+    int is_enabled = true;
+
+private:
+    std::unique_ptr<FullscreenQuad> bit_block_transfer;
+    std::unique_ptr<Framebuffer>     tone_mapping_target;
+
+    // シェーダー
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> tone_mapping_ps;
+
+    // 定数バッファ
+    Microsoft::WRL::ComPtr<ID3D11Buffer> cb_config;
+};
+```
+
+---
+
+## 💻 HLSL実装
+
+以下は、AtmosFioreのTone Mapping処理で使用されるHLSLシェーダーコードです。
+
+### ACES Filmic Tone Mapping
+
+```hlsl
+// ACES Filmic Tone Mapping
+float3 ACESFilmic(float3 x)
+{
+    float a = 2.51f;
+    float b = 0.03f;
+    float c = 2.43f;
+    float d = 0.59f;
+    float e = 0.14f;
+    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0f, 1.0f);
+}
+```
+
+### Reinhard Tone Mapping
+
+```hlsl
+// Reinhard Tone Mapping
+float3 Reinhard(float3 x)
+{
+    return x / (1.0f + x);
+}
+```
+
+### Unreal Engine Tone Mapping
+
+```hlsl
+// Unreal Engine Tone Mapping
+float3 Unreal(float3 x)
+{
+    return x / (x + 1.0f) * 1.02f - 0.02f;
+}
+```
+
+### Hable Tone Mapping
+
+```hlsl
+// Hable Tone Mapping (Filmic Curve)
+float3 Hable(float3 x)
+{
+    float A = 0.15f;
+    float B = 0.50f;
+    float C = 0.10f;
+    float D = 0.20f;
+    float E = 0.02f;
+    float F = 0.30f;
+    
+    return ((x * (A * x + C * B) + D * E) / (x * (A * x + B) + D * F)) - E / F;
+}
+```
+
+### Uchimura Tone Mapping
+
+```hlsl
+// Uchimura Tone Mapping
+float3 Uchimura(float3 x, float P, float a, float m, float l, float c, float b)
+{
+    return (x * (P * x + c * b) + d) / (x * (P * x + a) + d) - b / P;
+}
+```
+
+### メイントーンマッピング関数
+
+```hlsl
+// トーンマッピングのメイン関数
+float3 ApplyToneMapping(float3 color)
+{
+    // 露出調整
+    color *= exposure;
+    
+    // トーンマッピングアルゴリズムの適用
+    switch (mapping_type)
+    {
+        case 0: // ACES
+            return ACESFilmic(color);
+        case 1: // Reinhard
+            return Reinhard(color);
+        case 2: // Unreal
+            return Unreal(color);
+        case 3: // Neutral
+            return color / (1.0f + max_white);
+        case 4: // Linear
+            return color;
+        case 5: // Hable
+            return Hable(color);
+        case 6: // AgX
+            return AgX(color);
+        case 7: // GT
+            return GT(color);
+        case 8: // Drago
+            return Drago(color);
+        case 9: // Exponential
+            return 1.0f - exp(-color);
+        case 10: // Logarithmic
+            return log(1.0f + color);
+        case 11: // Ward
+            return Ward(color);
+        case 12: // Lottes
+            return Lottes(color);
+        case 13: // Hejl
+            return Hejl(color);
+        case 14: // RomBinDaHouse
+            return RomBinDaHouse(color);
+        case 15: // ReinhardExtended
+            return ReinhardExtended(color);
+        case 16: // FilmicSimple
+            return FilmicSimple(color);
+        case 17: // ACESApprox
+            return ACESApprox(color);
+        case 18: // PBRNeutral
+            return PBRNeutral(color);
+        case 19: // Sigmoid
+            return Sigmoid(color);
+        case 20: // Piecewise
+            return Piecewise(color);
+        case 21: // Cineon
+            return Cineon(color);
+        case 22: // Exposure
+            return color * exposure;
+        case 23: // GammaOnly
+            return color;
+        case 24: // PQApprox
+            return PQApprox(color);
+        case 25: // HLGApprox
+            return HLGApprox(color);
+        case 26: // OpenDRTLike
+            return OpenDRTLike(color);
+        case 27: // CameraResponse
+            return CameraResponse(color);
+        case 28: // Uchimura
+            return Uchimura(color, gt_param, a, m, l, c, b);
+        case 29: // ClampOnly
+            return clamp(color, 0.0f, 1.0f);
+        case 30: // WhitePreservingLuma
+            return WhitePreservingLuma(color);
+        case 31: // FilmicALU
+            return FilmicALU(color);
+        case 32: // AgXPunchy
+            return AgXPunchy(color);
+        case 33: // CustomCurve
+            return CustomCurve(color);
+        default:
+            return ACESFilmic(color);
+    }
+}
+```
+
+### メインシェーダー
+
+```hlsl
+// tonemapping_ps.hlsl
+float4 main(VS_OUT pin) : SV_TARGET
+{
+    float4 hdr_color = adjusted_hdr_texture.Sample(sampler_states[POINT_CLAMP], pin.texcoord);
+    if (!is_enabled)
+        return hdr_color;
+
+    float3 color = hdr_color.rgb;
+
+    // トーンマッピング適用
+    color = ApplyToneMapping(color);
+
+    // ガンマ補正
+    color = pow(color, 1.0 / gamma);
+
+    return float4(color, hdr_color.a);
+}
+```
+
+---
+
+## 🎨 Adaptation（自動露出）との連携
+
+Tone Mappingは、Adaptation（自動露出）と連携して使用します。Adaptationがシーンの輝度に応じて露出を調整し、その結果をTone MappingがSDR範囲にマッピングします。
+
+### Adaptationの役割
+
+Adaptationは、シーンの平均輝度を計算し、目の順応をシミュレートして露出を自動調整します。これにより、暗い場所から明るい場所に移動した際の目の順応を再現できます。
+
+```cpp
+// Adaptationによる露出調整
+void Adaptation::make(ID3D11DeviceContext* immediate_context, ID3D11ShaderResourceView* input_hdr_srv)
+{
+    // シーンの平均輝度を計算
+    // 露出値を更新
+    // 露出調整済みのHDRバッファを出力
+}
+```
+
+---
+
+## 🔧 実装のポイント
+
+### 1. 複数のトーンマッピングアルゴリズム
+
+AtmosFioreでは、34種類のトーンマッピングアルゴリズムを実装しています。これにより、シーンに応じて最適なアルゴリズムを選択できます。デフォルトはACES Filmic Tone Mappingを使用しています。
+
+### 2. 露出調整
+
+露出（exposure）パラメータを調整することで、シーン全体の明るさを制御できます。Adaptationと連携することで、自動で露出を調整することも可能です。
+
+### 3. ガンマ補正
+
+ガンマ（gamma）パラメータを調整することで、ディスプレイのガンマ特性を補正できます。通常は2.2を使用しています。
+
+---
+
+## 📝 注意点
+
+<Aside type="note">
+  Tone Mappingはポストプロセス前提設計であり、Fullscreen Quad を使用してフルスクリーン描画を行います。
+</Aside>
+
+<Aside type="note">
+  Tone MappingはAdaptationの後に適用することを想定しています。Adaptationで露出調整済みのHDRバッファを入力として受け取ります。
+</Aside>
+
+<Aside type="caution">
+  トーンマッピングアルゴリズムによっては、パラメータの範囲が異なる場合があります。各アルゴリズムに適したパラメータ値を使用してください。
+</Aside>
